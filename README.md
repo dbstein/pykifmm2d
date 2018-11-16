@@ -1,11 +1,11 @@
-#pykifmm2d: Kernel Independent FMM in Two Dimensions
+# pykifmm2d: Kernel Independent FMM in Two Dimensions
  
 Provide a pure python implementation of the Kernel Independent Fast-Multipole method in two dimensions, largely based off of the algorithm presented in the paper [A kernel-independent adaptive fast multipole
 algorithm in two and three dimensions](https://www.mrl.nyu.edu/~harper/kifmm3d/documentation/papers/fmm.pdf). The algorithm differs somewhat, however, since its based on a level-restricted quadtree instead of a general quadtree.
 
 The primary purpose of this project was initially for me to understand what an FMM was doing, how it was implemented, and if it was possible to write a relatively efficient version of one in python (+numba acceleration). Nevertheless, I'm not aware of any other easily available / installable KIFMM implementations in 2D so this may be of some use to others. I have no plans to extend this to three dimensions, where well-optimized and scalable codes already exist, e.g [PVFMM](https://github.com/dmalhotra/pvfmm).
 
-##What's here:
+## What's here:
 This project is in an early state. For now, the only things implemented are:
 
 1. Trees
@@ -19,7 +19,7 @@ This project is in an early state. For now, the only things implemented are:
 	4. This basic FMM will be largely left in-tact, as an unoptimized, simple to understand code, even if I ultimately write more optimized versions. I hope that others can use this code to learn from, even if its not the fastest code out there.
 3. A few examples: for basic tree formation and Laplace kernels. The Laplace example requires numba and numexpr to run correctly.
 
-##What's coming:
+## What's coming:
 
 1. Properly implemented S-list interactions
 2. Planned FMMs (for faster evaluation of repeated FMMs)
@@ -30,13 +30,13 @@ This project is in an early state. For now, the only things implemented are:
 	2. Examples comparing to the [FMMLIB2D](https://github.com/zgimbutas/fmmlib2d) code exposed through my python wrapper [pyfmmlib2d](https://github.com/dbstein/pyfmmlib2d).
 	3. Stokes/Brinkman, once I figure out how to implement them.
 
-##Installation
+## Installation
 Install by navigating to the package route and typing:
 ```bash
 pip install .
 ```
 
-###What's required:
+### What's required:
 
 1. Not much: a base python installation and numpy/scipy
 2. Some examples require numba, numexpr, and matplotlib
