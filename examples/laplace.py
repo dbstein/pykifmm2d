@@ -10,6 +10,8 @@ Demonstration of the FMM for the Laplace Kernel
 
 Do not chose N_total too large; this code executes a direct sum to get
 the true value to compare against!
+
+On my macbook pro N=50,000 takes the direct method ~7s, the FMM ~1s
 """
 
 random2 = pykifmm2d.utils.random2
@@ -19,7 +21,7 @@ Laplace_Kernel_Form  = pykifmm2d.kernels.laplace.Laplace_Kernel_Form
 N_total = 50000
 
 # construct some data to run FMM on
-N_clusters = 5
+N_clusters = 7
 N_per_cluster = 1000
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
@@ -37,7 +39,7 @@ N_equiv = 64
 # get random density
 tau = np.random.rand(N_total)/N_total
 
-print('\nDirect vs. FMM demonstration with', N_total, 'points.')
+print('\nLaplace Kernel Direct vs. FMM demonstration with', N_total, 'points.')
 
 # do direct evaluation
 st = time.time()

@@ -2,8 +2,8 @@ import numpy as np
 import scipy as sp
 import scipy.linalg
 import time
-from .leaf import Leaf
-from .tree import Tree
+from .leaf2 import Leaf
+from .tree2 import Tree
 
 def get_level_information(node_width, theta):
     # get information for this level
