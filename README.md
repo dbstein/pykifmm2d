@@ -9,12 +9,14 @@ The primary purpose of this project was initially for me to understand what an F
 This project is in an early state. For now, the only things implemented are:
 
 1. Trees
-	1. The level-restriction code has a bug, and needs to be run several times to guarantee a correctly level-restricted quad-tree. 
-	2. Its reasonably fast for trees that aren't huge, but could certainly benefit from some optimization.
-	3. More pre-work (computation of I-lists and things) should be done here, instead of in the FMM
+	1. There are two trees (well, three, really). I've rewritten the tree a few times:
+		a. The first tree I wrote is in tree.py; this isn't in use any more.
+		b. The second is in tree2.py, this is a pretty fast for small trees and large cutoffs but slows down for larger trees and small cutoffs.  Its a simple implemenation and is currently used by the FMM.
+		c. The third tree is in tree3.py, and is well optimized and quite fast.
+	2. In the near future, the FMM will be moved over to using the optimized tree from tree3.py.  There are still a few things to implement in tree3.py and a few things that I need to think about before doing this.
 2. A basic FMM code for computing the sum of G (and only G, not derivatives...) from a set of sources to itself, ignoring the self-interaction
 	1. This code does not currently have support for either S-lists or X-lists
-	2. For S-lists, all neighbor cells at the same level are evaluated directly. There are situations, particularly in heavily nested trees, where this means that there may be very large direct interactions. This could considerably impact performance. I intend to implement this soon.
+	2. For S-lists, all neighbor cells at the same level are evaluated directly. There are situations, particularly in heavily nested trees, where this means that there may be very large direct interactions. This could considerably impact performance. In the tree structure in tree3.py, I have made a slightly different decision: leaves are refined if they're more than 1 level in depth apart from any colleagues.  This prevents S-lists that are worse than a 4-to-1 ratio, and (I'm pretty sure) leads to no infinitely shitty situations, either in refinement or evaluation.  I think this is a worthwhile compromise to make for the code simplifications it gives.
 	3. For X-lists, the leaf is 'refined' into 'fake children', which allows significant simplification in implementation, however may have some effect on performance, both for tree formation and in the actual FMM. I probably don't intend to ever fix this, unless it proves to be a serious issue in terms of performance.
 	4. This basic FMM will be largely left in-tact, as an unoptimized, simple to understand code, even if I ultimately write more optimized versions. I hope that others can use this code to learn from, even if its not the fastest code out there.
 3. A few examples: for basic tree formation and Laplace kernels. The Laplace example requires numba and numexpr to run correctly.
@@ -22,6 +24,7 @@ This project is in an early state. For now, the only things implemented are:
 ## What's coming:
 
 1. Properly implemented S-list interactions
+	a. Scratch that: a new tree that makes treating S-list interactions naively not a big deal.
 2. Planned FMMs (for faster evaluation of repeated FMMs)
 3. Optimized versions
 4. A version robust to rapidly decaying Greens functions (e.g. modified Helmholtz with large k)
@@ -38,7 +41,7 @@ pip install .
 
 ### What's required:
 
-1. Not much: a base python installation and numpy/scipy
-2. Some examples require numba, numexpr, and matplotlib
+1. Not much: a base python installation and numpy/scipy, and numba
+2. Some examples require numexpr and matplotlib
 3. For optimal performance, I recommend using the [Intel Distribution for Python](https://software.intel.com/en-us/articles/using-intel-distribution-for-python-with-anaconda)
 

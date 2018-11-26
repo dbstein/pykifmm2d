@@ -18,7 +18,7 @@ random2 = pykifmm2d.utils.random2
 Laplace_Kernel_Apply = pykifmm2d.kernels.laplace.Laplace_Kernel_Apply
 Laplace_Kernel_Form  = pykifmm2d.kernels.laplace.Laplace_Kernel_Form
 
-N_total = 50000
+N_total = 100000
 
 # construct some data to run FMM on
 N_clusters = 7
