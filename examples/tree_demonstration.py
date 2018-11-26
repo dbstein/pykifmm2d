@@ -8,7 +8,7 @@ plt.ion()
 random2 = pykifmm2d.utils.random2
 
 # construct some data to tree
-N_total = 100000
+N_total = 1000
 N_random = int(0.1*N_total)
 N_per_cluster = int(round((N_total - N_random)/20))
 N_clusters = 20
