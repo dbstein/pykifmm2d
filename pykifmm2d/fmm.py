@@ -1,8 +1,11 @@
 import numpy as np
 import scipy as sp
 import scipy.linalg
+import numba
 import time
 from .tree import Tree
+from .kernels.laplace import _laplace_kernel2 as _laplace_kernel
+from .kernels.laplace import _laplace_kernel_self2 as _laplace_kernel_self
 
 def get_level_information(node_width, theta):
     # get information for this level
@@ -213,21 +216,7 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
             temp1 = M2MC[ind].dot(ancestor_level.RSEQD.T).T
             for ii in range(int(ancestor_level.n_node/4)):
                 u_check_surfaces[ancestor_level.short_parent_ind[ii]] = temp1[ii]
-        # for big improvements, this is where to focus
-        # this should be ideally done by a call to a kernel_many() type function
-        # will come back to this once the FMM is working!
-        for ii in range(Level.n_node):
-            # if (Level.leaf[ii] and not Level.Xlist[ii]) or Level.fake_leaf[ii]:
-            if Level.compute_upwards[ii]:
-                if Level.ns[ii] > 0:
-                    # get local tau values
-                    botind = Level.bot_ind[ii]
-                    topind = Level.top_ind[ii]
-                    tlocal = tau_ordered[botind:topind]
-                    # compute solution on check surface
-                    Kernel_Apply(tree.x[botind:topind], tree.y[botind:topind],
-                        tlocal, large_xs[ind], large_ys[ind], Level.xmid[ii],
-                        Level.ymid[ii], u_check_surfaces[ii])
+        numba_upwards_pass(tree.x, tree.y, Level.bot_ind, Level.top_ind, Level.ns, Level.compute_upwards, large_xs[ind], large_ys[ind], Level.xmid, Level.ymid, tau_ordered, u_check_surfaces)
         Level.Equiv_Densities[:] = sp.linalg.lu_solve(E2C_LUs[ind], u_check_surfaces.T).T
     et = time.time()
     my_print('....Time for upwards pass:     {:0.2f}'.format(1000*(et-st)))
@@ -245,31 +234,14 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
         # now we have not leaves in the descendant_level.Local_Solutions...
         descendant_level.Local_Solutions[:] = local_solutions.reshape(descendant_level.Local_Solutions.shape)
         # compute all possible interactions
-        M2Ms = np.empty([3,3], dtype=object)
+        M2Ms = np.empty([3,3,doit.sum(),4*Nequiv], dtype=float)
         CM2Lh = CM2LS[ind+1]
         for kkx in range(3):
             for kky in range(3):
                 if not (kkx-1 == 0 and kky-1 == 0):
-                    M2Ms[kkx, kky] = CM2Lh[kkx, kky].dot(descendant_level.RSEQD.T).T
-        # now add these in (tons of space for optimization in here!)
-        for ii in range(Level.n_node):
-            # if not Level.leaf[ii]:
-            if doit[ii]:
-                dii = int(Level.children_ind[ii]/4)
-                # note the ii node is the target
-                for jj in range(9):
-                    # the jj node is the 'source'
-                    ci = Level.colleagues[ii,jj]
-                    if ci >= 0 and ci != ii:
-                        # for two nodes at the same depth, determine relative position to
-                        # figure out which of the M2Ls to use
-                        # this need to be moved to the prep stage!!!!
-                        xdist = -int(round((Level.xmin[ii] - Level.xmin[ci])/Level.width))
-                        ydist = -int(round((Level.ymin[ii] - Level.ymin[ci])/Level.width))
-                        if not (xdist == 0 and ydist == 0):
-                            di = int(Level.children_ind[ci]/4)
-                            descendant_level.Local_Solutions[4*dii:4*dii+4] += \
-                                    M2Ms[xdist+1, ydist+1][di].reshape([4, Nequiv])
+                    M2Ms[kkx, kky, :, :] = CM2Lh[kkx, kky].dot(descendant_level.RSEQD.T).T
+        ci4 = (Level.children_ind/4).astype(int)
+        numba_add_interactions(doit, ci4, Level.colleagues, Level.xmid, Level.ymid, descendant_level.Local_Solutions, M2Ms, Nequiv)
     et = time.time()
     my_print('....Time for downwards pass 1: {:0.2f}'.format(1000*(et-st)))
     # downwards pass 2 - start at top and evaluate local expansions
@@ -277,14 +249,7 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
     for ind in range(1,tree.levels):
         Level = tree.Levels[ind]
         local_expansions = sp.linalg.lu_solve(E2C_LUs[ind], Level.Local_Solutions.T).T
-        for ii in range(Level.n_node):
-            if Level.leaf[ii]:
-                botind = Level.bot_ind[ii]
-                topind = Level.top_ind[ii]
-                solution_here = solution_ordered[botind:topind]
-                Kernel_Apply(large_xs[ind], large_ys[ind],
-                        local_expansions[ii], tree.x[botind:topind], tree.y[botind:topind],
-                        -Level.xmid[ii], -Level.ymid[ii], solution_here)
+        numba_downwards_pass2(tree.x, tree.y, Level.bot_ind, Level.top_ind, Level.ns, Level.leaf, large_xs[ind], large_ys[ind], Level.xmid, Level.ymid, local_expansions, solution_ordered)
     et = time.time()
     my_print('....Time for downwards pass 2: {:0.2f}'.format(1000*(et-st)))
     solution_save = solution_ordered.copy()
@@ -292,30 +257,72 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
     st = time.time()
     for ind in range(1,tree.levels):
         Level = tree.Levels[ind]
-        for ii in range(Level.n_node):
-            if Level.leaf[ii]:
-                botind = Level.bot_ind[ii]
-                topind = Level.top_ind[ii]
-                solution_here = solution_ordered[botind:topind]
-                target_x_here = tree.x[botind:topind]
-                target_y_here = tree.y[botind:topind]
-                for jj in range(9):
-                    ci = Level.colleagues[ii,jj]
-                    if ci >= 0:
-                        botind = Level.bot_ind[ci]
-                        topind = Level.top_ind[ci]
-                        tau_here = tau_ordered[botind:topind]
-                        source_x_here = tree.x[botind:topind]
-                        source_y_here = tree.y[botind:topind]
-                        if ci == ii:
-                            addition = Kernel_Apply(source_x_here, source_y_here, tau_here)
-                        else:
-                            addition = Kernel_Apply(source_x_here, source_y_here, tau_here, target_x_here, target_y_here)
-                        solution_here += addition
+        evaluate_neighbor_interactions(tree.x, tree.y, Level.leaf, Level.bot_ind, Level.top_ind, tau_ordered, Level.colleagues, solution_ordered)
     et = time.time()
     my_print('....Time for downwards pass 3: {:0.2f}'.format(1000*(et-st)))
     # deorder the solution
     desorter = np.argsort(tree.ordv)
     return solution_ordered[desorter]
+
+@numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True)
+def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
+    n = botind.shape[0]
+    for i in range(n):
+        if leaf[i]:
+            bind1 = botind[i]
+            tind1 = topind[i]
+            for j in range(9):
+                ci = colleagues[i,j]
+                if ci >= 0:
+                    bind2 = botind[ci]
+                    tind2 = topind[ci]
+                    if ci == i:
+                        _laplace_kernel_self(x[bind1:tind1], y[bind1:tind1], tau[bind1:tind1], sol[bind1:tind1])
+                    else:
+                        _laplace_kernel(x[bind2:tind2], y[bind2:tind2], x[bind1:tind1], y[bind1:tind1], 0.0, 0.0, tau[bind2:tind2], sol[bind1:tind1])
+
+@numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])",parallel=True)
+def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
+    n = botind.shape[0]
+    for i in range(n):
+        if compute_upwards[i] and (ns[i] > 0):
+            bi = botind[i]
+            ti = topind[i]
+            _laplace_kernel(x[bi:ti], y[bi:ti], xtarg, ytarg, xmid[i], ymid[i], tau[bi:ti], ucheck[i])
+
+@numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:,:],f8[:])",parallel=True)
+def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
+    n = botind.shape[0]
+    for i in range(n):
+        if leaf[i] and (ns[i] > 0):
+            bi = botind[i]
+            ti = topind[i]
+            _laplace_kernel(xsrc, ysrc, x[bi:ti], y[bi:ti], -xmid[i], -ymid[i], local_expansions[i], sol[bi:ti])
+
+@numba.njit("(b1[:],i8[:],i8[:,:],f8[:],f8[:],f8[:,:],f8[:,:,:,:],i8)",parallel=True)
+def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M2Ms, Nequiv):
+    n = doit.shape[0]
+    for i in numba.prange(n):
+        if doit[i]:
+            dii = ci4[i]
+            for j in range(9):
+                ci = colleagues[i,j]
+                if ci >= 0 and ci != i:
+                    if abs(xmid[i] - xmid[ci]) < 1e-14:
+                        xdist = 0
+                    elif xmid[i] - xmid[ci] < 0:
+                        xdist = 1
+                    else:
+                        xdist = -1
+                    if abs(ymid[i] - ymid[ci]) < 1e-14:
+                        ydist = 0
+                    elif ymid[i] - ymid[ci] < 0:
+                        ydist = 1
+                    else:
+                        ydist = -1
+                    di = ci4[ci]
+                    for k in range(4):
+                        Local_Solutions[4*dii+k] += \
+                            M2Ms[xdist+1,ydist+1,di,k*Nequiv:(k+1)*Nequiv]
 
 
