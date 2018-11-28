@@ -2,8 +2,8 @@ import numpy as np
 import numexpr as ne
 import numba
 
-@numba.njit("(f8[:],f8[:],f8[:],f8[:],f8[:],f8[:])",parallel=True)
-def _laplace_kernel(sx, sy, tx, ty, charge, pot):
+@numba.njit("(f8[:],f8[:],f8[:],f8[:],f8,f8,f8[:],f8[:])",parallel=True)
+def _laplace_kernel(sx, sy, tx, ty, shiftx, shifty, charge, pot):
     """
     Numba-jitted Laplace Kernel
     Incoming: charge
@@ -14,6 +14,8 @@ def _laplace_kernel(sx, sy, tx, ty, charge, pot):
         sy,     intent(in),  float(ns), y-coordinates of source
         tx,     intent(in),  float(nt), x-coordinates of target
         ty,     intent(in),  float(nt), y-coordinates of target
+        shiftx, intent(in),  float,     target shift in x-direction
+        shifty, intent(in),  float,     target shift in y-direction
         charge, intent(in),  float(ns), charge at source locations
         pot,    intent(out), float(nt), potential at target locations
     ns = number of source points; nt = number of target points
@@ -24,8 +26,8 @@ def _laplace_kernel(sx, sy, tx, ty, charge, pot):
     for i in numba.prange(nt):
         temp = np.zeros(ns)
         for j in range(ns):
-            dx = tx[i] - sx[j]
-            dy = ty[i] - sy[j]
+            dx = tx[i] + shiftx - sx[j]
+            dy = ty[i] + shifty - sy[j]
             temp[j] = dx**2 + dy**2
         for j in range(ns):
             temp[j] = np.log(temp[j])
@@ -59,16 +61,18 @@ def _laplace_kernel_self(sx, sy, charge, pot):
         for j in range(ns):
             if i != j:
                 pot[i] += 0.5*charge[j]*temp[j]
-def Laplace_Kernel_Apply(sx, sy, charge, tx=None, ty=None, pot=None):
+def Laplace_Kernel_Apply(sx, sy, charge, tx=None, ty=None, tsx=0.0, tsy=0.0, pot=None):
     is_self = tx is None or ty is None
     scale = -0.5/np.pi
     if pot is None:
         n_out = sx.shape[0] if is_self else tx.shape[0]
         pot = np.zeros(n_out, dtype=float)
+    else:
+        pot *= 0.0
     if is_self:
         _laplace_kernel_self(sx, sy, charge*scale, pot)
     else:
-        _laplace_kernel(sx, sy, tx, ty, charge*scale, pot)
+        _laplace_kernel(sx, sy, tx, ty, tsx, tsy, charge*scale, pot)
     return pot
 def Laplace_Kernel_Form(sx, sy, tx=None, ty=None):
     """

@@ -10,10 +10,10 @@ random2 = pykifmm2d.utils.random2
 plotit = True
 
 # construct some data to tree
-N_total = 1000000
-N_random = int(0.1*N_total)
-N_per_cluster = int(round((N_total - N_random)/20))
-N_clusters = 20
+N_total = 100000
+N_random = int(0.5*N_total)
+N_clusters = 100
+N_per_cluster = int(round((N_total - N_random)/N_clusters))
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
 px, py = random2(N_total, -1, 1)
@@ -31,7 +31,7 @@ class empty(object):
 
 # generate tree
 st = time.time()
-tree = pykifmm2d.TreeNew(px, py, N_cutoff)
+tree = pykifmm2d.Tree(px, py, N_cutoff)
 time_tree = (time.time() - st)*1000
 
 print('\nTree for', N_total, 'points formed in {:0.1f}'.format(time_tree), 'ms.')
@@ -40,16 +40,5 @@ tree.print_structure()
 
 if N_total <= 500000 and plotit:
 	fig, ax = plt.subplots()
-	tree.plot(ax, mpl, points=True, s=0.005)
-
-# import line_profiler
-# %load_ext line_profiler
-# %lprun -f pykifmm2d.__init__ pykifmm2d.TreeNew(px, py, N_cutoff)
-
-# import data_profiler as profiler
-# p = profiler.Profile(signatures=False)
-# p.enable()
-# tree = pykifmm2d.TreeNew(px, py, N_cutoff)
-# p.disable()
-# p.print_stats()
-
+	tree.plot(ax, mpl, points=True, s=0.01)
+	ax.set_aspect('equal')

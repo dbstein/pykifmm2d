@@ -2,7 +2,7 @@ import numpy as np
 import scipy as sp
 import scipy.linalg
 import time
-from .tree import Tree
+from .tree3 import Tree
 
 def get_level_information(node_width, theta):
     # get information for this level
@@ -213,12 +213,15 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
             temp1 = M2MC[ind].dot(ancestor_level.RSEQD.T).T
             for ii in range(int(ancestor_level.n_node/4)):
                 u_check_surfaces[ancestor_level.short_parent_ind[ii]] = temp1[ii]
+            if ancestor_level.has_fake_children:
+                temp2 = M2MC[ind].dot(ancestor_level.Fake_RSEQD.T).T
+                for ii in range(int(ancestor_level.n_fake_node/4)):
+                    u_check_surfaces[ancestor_level.fake_short_parent_ind[ii]] = temp2[ii]
         # for big improvements, this is where to focus
         # this should be ideally done by a call to a kernel_many() type function
         # will come back to this once the FMM is working!
         for ii in range(Level.n_node):
-            # if (Level.leaf[ii] and not Level.Xlist[ii]) or Level.fake_leaf[ii]:
-            if Level.compute_upwards[ii]:
+            if Level.leaf[ii] and not Level.Xlist[ii]:
                 if Level.ns[ii] > 0:
                     # get local tau values
                     botind = Level.bot_ind[ii]
@@ -229,6 +232,19 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
                         tlocal, large_xs[ind], large_ys[ind], Level.xmid[ii],
                         Level.ymid[ii], u_check_surfaces[ii])
         Level.Equiv_Densities[:] = sp.linalg.lu_solve(E2C_LUs[ind], u_check_surfaces.T).T
+        if Level.has_fake_children:
+            u_check_surfaces = Level.Fake_Check_Us
+            for ii in range(Level.n_fake_node):
+                if Level.fake_ns[ii] > 0:
+                    # get local tau values
+                    botind = Level.fake_bot_ind[ii]
+                    topind = Level.fake_top_ind[ii]
+                    tlocal = tau_ordered[botind:topind]
+                    # compute solution on check surface
+                    Kernel_Apply(tree.x[botind:topind], tree.y[botind:topind],
+                        tlocal, large_xs[ind], large_ys[ind],Level.fake_xmid[ii],
+                        Level.fake_ymid[ii], u_check_surfaces[ii])
+            Level.Fake_Equiv_Densities[:] = sp.linalg.lu_solve(E2C_LUs[ind], u_check_surfaces.T).T
     et = time.time()
     my_print('....Time for upwards pass:     {:0.2f}'.format(1000*(et-st)))
     # downwards pass 1 - start at top and work down to build up local expansions
@@ -237,12 +253,10 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
         # first move local expansions downward
         Level = tree.Levels[ind]
         descendant_level = tree.Levels[ind+1]
-        doit = np.logical_and(np.logical_or(Level.not_leaf, Level.Xlist), np.logical_not(Level.fake_leaf))
-        local_expansions = sp.linalg.lu_solve(E2C_LUs[ind], Level.Local_Solutions[doit].T).T
+        local_expansions = sp.linalg.lu_solve(E2C_LUs[ind], Level.Local_Solutions[np.logical_not(Level.leaf)].T).T
         local_solutions = M2MC[ind].T.dot(local_expansions.T).T
-        sorter = np.argsort(Level.children_ind[doit])
+        sorter = np.argsort(Level.children_ind[np.logical_not(Level.leaf)])
         local_solutions = local_solutions[sorter]
-        # now we have not leaves in the descendant_level.Local_Solutions...
         descendant_level.Local_Solutions[:] = local_solutions.reshape(descendant_level.Local_Solutions.shape)
         # compute all possible interactions
         M2Ms = np.empty([3,3], dtype=object)
@@ -251,10 +265,15 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
             for kky in range(3):
                 if not (kkx-1 == 0 and kky-1 == 0):
                     M2Ms[kkx, kky] = CM2Lh[kkx, kky].dot(descendant_level.RSEQD.T).T
+        if descendant_level.has_fake_children:
+            FM2Ms = np.empty([3,3], dtype=object)
+            for kkx in range(3):
+                for kky in range(3):
+                    if not (kkx-1 == 0 and kky-1 == 0):
+                        FM2Ms[kkx, kky] = CM2Lh[kkx, kky].dot(descendant_level.Fake_RSEQD.T).T
         # now add these in (tons of space for optimization in here!)
         for ii in range(Level.n_node):
-            # if not Level.leaf[ii]:
-            if doit[ii]:
+            if not Level.leaf[ii]:
                 dii = int(Level.children_ind[ii]/4)
                 # note the ii node is the target
                 for jj in range(9):
@@ -266,10 +285,16 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
                         # this need to be moved to the prep stage!!!!
                         xdist = -int(round((Level.xmin[ii] - Level.xmin[ci])/Level.width))
                         ydist = -int(round((Level.ymin[ii] - Level.ymin[ci])/Level.width))
+                        Xlist = Level.Xlist[ci]
                         if not (xdist == 0 and ydist == 0):
-                            di = int(Level.children_ind[ci]/4)
-                            descendant_level.Local_Solutions[4*dii:4*dii+4] += \
-                                    M2Ms[xdist+1, ydist+1][di].reshape([4, Nequiv])
+                            if Xlist:
+                                di = int(Level.fake_children_ind[ci]/4)
+                                descendant_level.Local_Solutions[4*dii:4*dii+4] += \
+                                        FM2Ms[xdist+1, ydist+1][di].reshape([4, Nequiv])
+                            else:
+                                di = int(Level.children_ind[ci]/4)
+                                descendant_level.Local_Solutions[4*dii:4*dii+4] += \
+                                        M2Ms[xdist+1, ydist+1][di].reshape([4, Nequiv])
     et = time.time()
     my_print('....Time for downwards pass 1: {:0.2f}'.format(1000*(et-st)))
     # downwards pass 2 - start at top and evaluate local expansions
@@ -292,6 +317,7 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
     st = time.time()
     for ind in range(1,tree.levels):
         Level = tree.Levels[ind]
+        ancestor_level = tree.Levels[ind-1]
         for ii in range(Level.n_node):
             if Level.leaf[ii]:
                 botind = Level.bot_ind[ii]
@@ -299,19 +325,42 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
                 solution_here = solution_ordered[botind:topind]
                 target_x_here = tree.x[botind:topind]
                 target_y_here = tree.y[botind:topind]
+                pi = Level.parent_ind[ii]
                 for jj in range(9):
-                    ci = Level.colleagues[ii,jj]
+                    ci = ancestor_level.colleagues[pi,jj]
                     if ci >= 0:
-                        botind = Level.bot_ind[ci]
-                        topind = Level.top_ind[ci]
-                        tau_here = tau_ordered[botind:topind]
-                        source_x_here = tree.x[botind:topind]
-                        source_y_here = tree.y[botind:topind]
-                        if ci == ii:
-                            addition = Kernel_Apply(source_x_here, source_y_here, tau_here)
+                        if ancestor_level.Xlist[ci]:
+                            for kk in range(4):
+                                cci = ancestor_level.fake_children_ind[ci] + kk
+                                xdist = -int(round((Level.xmin[ii] - Level.fake_xmin[cci])/Level.width))
+                                ydist = -int(round((Level.ymin[ii] - Level.fake_ymin[cci])/Level.width))
+                                botind = Level.fake_bot_ind[cci]
+                                topind = Level.fake_top_ind[cci]
+                                tau_here = tau_ordered[Level.fake_bot_ind[cci]:Level.fake_top_ind[cci]]
+                                source_x_here = tree.x[botind:topind]
+                                source_y_here = tree.y[botind:topind]
+                                if xdist in [-1,0,1] and ydist in [-1,0,1]:
+                                    if xdist == 0 and ydist == 0:
+                                        addition = Kernel_Apply(source_x_here, source_y_here, tau_here)
+                                    else:
+                                        addition = Kernel_Apply(source_x_here, source_y_here, tau_here, target_x_here, target_y_here)
+                                    solution_here += addition        
                         else:
-                            addition = Kernel_Apply(source_x_here, source_y_here, tau_here, target_x_here, target_y_here)
-                        solution_here += addition
+                            for kk in range(4):
+                                cci = ancestor_level.children_ind[ci] + kk
+                                xdist = -int(round((Level.xmin[ii] - Level.xmin[cci])/Level.width))
+                                ydist = -int(round((Level.ymin[ii] - Level.ymin[cci])/Level.width))
+                                botind = Level.bot_ind[cci]
+                                topind = Level.top_ind[cci]
+                                tau_here = tau_ordered[Level.bot_ind[cci]:Level.top_ind[cci]]
+                                source_x_here = tree.x[botind:topind]
+                                source_y_here = tree.y[botind:topind]
+                                if xdist in [-1,0,1] and ydist in [-1,0,1]:
+                                    if xdist == 0 and ydist == 0:
+                                        addition = Kernel_Apply(source_x_here, source_y_here, tau_here)
+                                    else:
+                                        addition = Kernel_Apply(source_x_here, source_y_here, tau_here, target_x_here, target_y_here)
+                                    solution_here += addition
     et = time.time()
     my_print('....Time for downwards pass 3: {:0.2f}'.format(1000*(et-st)))
     # deorder the solution
