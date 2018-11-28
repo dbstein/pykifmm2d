@@ -19,14 +19,16 @@ And gives error <5e-14
 """
 
 random2 = pykifmm2d.utils.random2
-Laplace_Kernel_Apply = pykifmm2d.kernels.laplace.Laplace_Kernel_Apply
-Laplace_Kernel_Form  = pykifmm2d.kernels.laplace.Laplace_Kernel_Form
+Laplace_Kernel_Apply      = pykifmm2d.kernels.laplace.laplace_kernel
+Laplace_Kernel_Self_Apply = pykifmm2d.kernels.laplace.laplace_kernel_self
+Laplace_Kernel_Form       = pykifmm2d.kernels.laplace.Laplace_Kernel_Form
+Prepare_Functions         = pykifmm2d.fmm.prepare_numba_functions
 
-N_total = 1000000
+N_total = 100000
 
 # construct some data to run FMM on
-N_clusters = 63
-N_per_cluster = 10000
+N_clusters = 10
+N_per_cluster = 1000
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
 px, py = random2(N_total, -1, 1)
@@ -36,7 +38,7 @@ px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
 py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 200
+N_cutoff = 500
 # number of points used in Check/Equivalent Surfaces
 N_equiv = 64
 
@@ -50,7 +52,8 @@ reference = True
 if N_total <= 50000:
 	# by Direct Sum
 	st = time.time()
-	reference_eval = Laplace_Kernel_Apply(px, py, charge=tau)
+	reference_eval = np.zeros(N_total, dtype=float)
+	Laplace_Kernel_Self_Apply(px, py, tau, reference_eval)
 	time_direct_eval = (time.time() - st)*1000
 	print('\nDirect evaluation took:        {:0.1f}'.format(time_direct_eval))
 else:
@@ -68,15 +71,13 @@ else:
 		print('')
 		reference = False
 
-# do My FMM
+# jit compile internal numba functions
+numba_functions = Prepare_Functions(Laplace_Kernel_Apply, Laplace_Kernel_Self_Apply)
+# do my FMM
 st = time.time()
 fmm_eval, tree = pykifmm2d.on_the_fly_fmm(px, py, tau, N_equiv, N_cutoff, \
-                    Laplace_Kernel_Form, Laplace_Kernel_Apply, verbose=True)
+                    Laplace_Kernel_Form, numba_functions, verbose=True)
 time_fmm_eval = (time.time() - st)*1000
 err = np.abs(fmm_eval - reference_eval)
 
 print('\nMaximum difference:            {:0.2e}'.format(err.max()))
-
-# import line_profiler
-# %load_ext line_profiler
-# %lprun -f pykifmm2d.fmm._on_the_fly_fmm pykifmm2d.on_the_fly_fmm(px, py, tau, N_equiv, N_cutoff, Laplace_Kernel_Form, Laplace_Kernel_Apply, verbose=True)

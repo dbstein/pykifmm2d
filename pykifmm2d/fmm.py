@@ -4,8 +4,6 @@ import scipy.linalg
 import numba
 import time
 from .tree import Tree
-from .kernels.laplace import _laplace_kernel2 as _laplace_kernel
-from .kernels.laplace import _laplace_kernel_self2 as _laplace_kernel_self
 
 def get_level_information(node_width, theta):
     # get information for this level
@@ -19,18 +17,12 @@ def get_level_information(node_width, theta):
     return small_surface_x_base, small_surface_y_base, large_surface_x_base, \
                 large_surface_y_base, r1, r2
 
-def generate_kernel_apply(kernel_form):
-    def kernel_apply(sx, sy, tau, tx=None, ty=None):
-        G = Kernel_Form(sx, sy, tx, ty)
-        return G.dot(tau)
-    return kernel_apply
-
 def fake_print(*args, **kwargs):
     pass
 def get_print_function(verbose):
     return print if verbose else fake_print
 
-def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, Kernel_Form, Kernel_Apply=None, \
+def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, Kernel_Form, numba_functions,
                                                                 verbose=False):
     """
     On-the-fly KIFMM
@@ -78,9 +70,6 @@ def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, Kernel_Form, Kernel_Apply=None, \
     my_print = get_print_function(verbose)
     my_print('\nBeginning FMM')
 
-    if Kernel_Apply is None:
-        Kernel_Apply = generate_kernel_apply(Kernel_Form)
-
     # build the tree
     st = time.time()
     tree = Tree(x, y, Ncutoff)
@@ -89,16 +78,56 @@ def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, Kernel_Form, Kernel_Apply=None, \
 
     if tree.levels <= 2:
         # just do a direct evaluation in this case
-        solution = Kernel_Apply(x, y, tau)
+        solution = np.zeros(tau.shape[0], dtype=float)
+        Kernel_Apply(x, y, tau, solution)
     else:
-        solution = _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, \
-                                                        Kernel_Apply, verbose)
+        solution = _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose)
     fmm_time = (time.time()-st)*1000
     my_print('FMM completed in               {:0.1f}'.format(fmm_time))
     return solution, tree
 
-def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
+def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply):
+    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True)
+    def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
+        n = botind.shape[0]
+        for i in range(n):
+            if leaf[i]:
+                bind1 = botind[i]
+                tind1 = topind[i]
+                for j in range(9):
+                    ci = colleagues[i,j]
+                    if ci >= 0:
+                        bind2 = botind[ci]
+                        tind2 = topind[ci]
+                        if ci == i:
+                            Kernel_Self_Apply(x[bind1:tind1], y[bind1:tind1], tau[bind1:tind1], sol[bind1:tind1])
+                        else:
+                            Kernel_Apply(x[bind2:tind2], y[bind2:tind2], x[bind1:tind1], y[bind1:tind1], 0.0, 0.0, tau[bind2:tind2], sol[bind1:tind1])
+
+    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])",parallel=True)
+    def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
+        n = botind.shape[0]
+        for i in range(n):
+            if compute_upwards[i] and (ns[i] > 0):
+                bi = botind[i]
+                ti = topind[i]
+                Kernel_Apply(x[bi:ti], y[bi:ti], xtarg, ytarg, xmid[i], ymid[i], tau[bi:ti], ucheck[i])
+
+    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:,:],f8[:])",parallel=True)
+    def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
+        n = botind.shape[0]
+        for i in range(n):
+            if leaf[i] and (ns[i] > 0):
+                bi = botind[i]
+                ti = topind[i]
+                Kernel_Apply(xsrc, ysrc, x[bi:ti], y[bi:ti], -xmid[i], -ymid[i], local_expansions[i], sol[bi:ti])
+    return evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2
+
+def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose):
     my_print = get_print_function(verbose)
+
+    (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2) \
+        = numba_functions
 
     # allocate workspace in tree
     if not tree.workspace_allocated:
@@ -263,41 +292,6 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, Kernel_Apply, verbose):
     # deorder the solution
     desorter = np.argsort(tree.ordv)
     return solution_ordered[desorter]
-
-@numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True)
-def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
-    n = botind.shape[0]
-    for i in range(n):
-        if leaf[i]:
-            bind1 = botind[i]
-            tind1 = topind[i]
-            for j in range(9):
-                ci = colleagues[i,j]
-                if ci >= 0:
-                    bind2 = botind[ci]
-                    tind2 = topind[ci]
-                    if ci == i:
-                        _laplace_kernel_self(x[bind1:tind1], y[bind1:tind1], tau[bind1:tind1], sol[bind1:tind1])
-                    else:
-                        _laplace_kernel(x[bind2:tind2], y[bind2:tind2], x[bind1:tind1], y[bind1:tind1], 0.0, 0.0, tau[bind2:tind2], sol[bind1:tind1])
-
-@numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])",parallel=True)
-def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
-    n = botind.shape[0]
-    for i in range(n):
-        if compute_upwards[i] and (ns[i] > 0):
-            bi = botind[i]
-            ti = topind[i]
-            _laplace_kernel(x[bi:ti], y[bi:ti], xtarg, ytarg, xmid[i], ymid[i], tau[bi:ti], ucheck[i])
-
-@numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:,:],f8[:])",parallel=True)
-def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
-    n = botind.shape[0]
-    for i in range(n):
-        if leaf[i] and (ns[i] > 0):
-            bi = botind[i]
-            ti = topind[i]
-            _laplace_kernel(xsrc, ysrc, x[bi:ti], y[bi:ti], -xmid[i], -ymid[i], local_expansions[i], sol[bi:ti])
 
 @numba.njit("(b1[:],i8[:],i8[:,:],f8[:],f8[:],f8[:,:],f8[:,:,:,:],i8)",parallel=True)
 def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M2Ms, Nequiv):
