@@ -1,3 +1,4 @@
+import pyfmmlib2d
 import pykifmm2d
 import numpy as np
 import time
@@ -38,9 +39,9 @@ px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
 py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 200
+N_cutoff = 48
 # number of points used in Check/Equivalent Surfaces
-N_equiv = 64
+N_equiv = 48
 
 # get random density
 tau = np.random.rand(N_total)/N_total
@@ -59,7 +60,10 @@ if N_total <= 50000:
 else:
 	# by FMMLIB2D, if available
 	try:
-		import pyfmmlib2d
+		# try:
+			# pyfmmlib2d
+		# except:
+			# import pyfmmlib2d
 		source = np.row_stack([px, py])
 		st = time.time()
 		out = pyfmmlib2d.RFMM(source, charge=tau, compute_source_potential=True)
@@ -97,7 +101,7 @@ import line_profiler
 %lprun -f pykifmm2d.fmm.fmm_planner fmm_plan = pykifmm2d.fmm.fmm_planner(px, py, N_equiv, N_cutoff, Laplace_Kernel_Form, numba_functions, verbose=True)
 """
 
-fig, ax = plt.subplots()
-fmm_plan.tree.plot(ax, mpl)
+# fig, ax = plt.subplots()
+# fmm_plan.tree.plot(ax, mpl)
 
 
