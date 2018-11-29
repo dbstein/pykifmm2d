@@ -346,7 +346,7 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
     st = time.time()
     tree = Tree(x, y, Ncutoff)
     tree_formation_time = (time.time() - st)*1000
-    my_print('....Tree formed in:            {:0.1f}'.format(tree_formation_time))
+    my_print('....Tree formed in:              {:0.1f}'.format(tree_formation_time))
 
     # allocate workspace in tree
     if not tree.workspace_allocated:
@@ -446,10 +446,10 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
                                     else:
                                         CM2Lh[base*Nequiv:(base+1)*Nequiv,bb*Nequiv:(bb+1)*Nequiv] = \
                                             M2Lhere[full_shift_x, full_shift_y]
-                    CM2Lhere[kkx, kky] = CM2Lh
+                    CM2Lhere[kkx, kky] = CM2Lh.T
         CM2LS.append(CM2Lhere)
     et = time.time()
-    my_print('....Time for basic work:       {:0.2f}'.format(1000*(et-st)))
+    my_print('....Time for basic work:         {:0.2f}'.format(1000*(et-st)))
 
     # generate sparse matrix for neighbor interactions for each level
     st = time.time()
@@ -486,7 +486,7 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
     for ind in range(1,tree.levels):
         neighbor_mat += neighbor_mats[ind]
     et = time.time()
-    my_print('....Time to make neighbor mats {:0.2f}'.format(1000*(et-st)))
+    my_print('....Time to make neighbor mats   {:0.2f}'.format(1000*(et-st)))
 
     # generate sparse matrix for upwards pass for each level
     st = time.time()
@@ -512,7 +512,7 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
         level_matrix = sp.sparse.coo_matrix((data,(iis,jjs)),shape=[Nequiv*Level.n_node,tree.x.shape[0]])
         upwards_mats.append(level_matrix.tocsr())
     et = time.time()
-    my_print('....Time to make upwards mats  {:0.2f}'.format(1000*(et-st)))
+    my_print('....Time to make upwards mats    {:0.2f}'.format(1000*(et-st)))
 
     # generate sparse matrix for downwards pass for each level
     st = time.time()
@@ -554,6 +554,11 @@ def set_matval(xx, xn, ti):
         xx = xxn
     return xx
 
+@numba.njit("(f8[:,:],f8[:,:],i8[:],i8)",parallel=True)
+def numba_distribute(ucs, temp, pi, n):
+    for i in numba.prange(n):
+        ucs[pi[i]] = temp[i]
+
 def planned_fmm(fmm_plan, tau):
     tree, theta, large_xs, large_ys, E2C_LUs, M2MC, M2LS, CM2LS, neighbor_mats, upwards_mats, downwards_mats, numba_functions, verbose \
         = fmm_plan.extract()
@@ -570,21 +575,23 @@ def planned_fmm(fmm_plan, tau):
     # upwards pass - start at bottom leaf nodes and build multipoles up
     st = time.time()
     mat_time = 0
+    lu_time = 0
     for ind in reversed(range(tree.levels)[1:]):
         Level = tree.Levels[ind]
-        u_check_surfaces = Level.Check_Us
         stt = time.time()
-        u_check_surfaces[:] = SpMV_viaMKL(upwards_mats[ind], tau_ordered).reshape([Level.n_node, Nequiv])
+        u_check_surfaces = SpMV_viaMKL(upwards_mats[ind], tau_ordered).reshape([Level.n_node, Nequiv])
         mat_time += time.time() - stt
         if ind != tree.levels-1:
             ancestor_level = tree.Levels[ind+1]
             temp1 = M2MC[ind].dot(ancestor_level.RSEQD.T).T
-            for ii in range(int(ancestor_level.n_node/4)):
-                u_check_surfaces[ancestor_level.short_parent_ind[ii]] = temp1[ii]
+            numba_distribute(u_check_surfaces, temp1, ancestor_level.short_parent_ind, int(ancestor_level.n_node/4))
+        stt = time.time()
         Level.Equiv_Densities[:] = sp.linalg.lu_solve(E2C_LUs[ind], u_check_surfaces.T).T
+        lu_time += time.time() - stt
     et = time.time()
-    my_print('....Time for upwards pass:     {:0.2f}'.format(1000*(et-st)))
-    my_print('....Time for matvecs:          {:0.2f}'.format(1000*mat_time))
+    my_print('....Time for upwards pass:       {:0.2f}'.format(1000*(et-st)))
+    # my_print('....Time for matvecs:            {:0.2f}'.format(1000*mat_time))
+    # my_print('....Time for lus:                {:0.2f}'.format(1000*lu_time))
     # downwards pass 1 - start at top and work down to build up local expansions
     st = time.time()
     for ind in range(1, tree.levels-1):
@@ -599,16 +606,17 @@ def planned_fmm(fmm_plan, tau):
         # now we have not leaves in the descendant_level.Local_Solutions...
         descendant_level.Local_Solutions[:] = local_solutions.reshape(descendant_level.Local_Solutions.shape)
         # compute all possible interactions
+        # do we actually need to do all these?  probably not...
         M2Ms = np.empty([3,3,doit.sum(),4*Nequiv], dtype=float)
         CM2Lh = CM2LS[ind+1]
         for kkx in range(3):
             for kky in range(3):
                 if not (kkx-1 == 0 and kky-1 == 0):
-                    M2Ms[kkx, kky, :, :] = CM2Lh[kkx, kky].dot(descendant_level.RSEQD.T).T
+                    np.dot(descendant_level.RSEQD, CM2Lh[kkx, kky], out=M2Ms[kkx, kky])
         ci4 = (Level.children_ind/4).astype(int)
         numba_add_interactions(doit, ci4, Level.colleagues, Level.xmid, Level.ymid, descendant_level.Local_Solutions, M2Ms, Nequiv)
     et = time.time()
-    my_print('....Time for downwards pass 1: {:0.2f}'.format(1000*(et-st)))
+    my_print('....Time for downwards pass 1:   {:0.2f}'.format(1000*(et-st)))
     # downwards pass 2 - start at top and evaluate local expansions
     st = time.time()
     for ind in range(1,tree.levels):
@@ -616,13 +624,13 @@ def planned_fmm(fmm_plan, tau):
         local_expansions = sp.linalg.lu_solve(E2C_LUs[ind], Level.Local_Solutions.T).T
         solution_ordered += SpMV_viaMKL(downwards_mats[ind], local_expansions.ravel())
     et = time.time()
-    my_print('....Time for downwards pass 2: {:0.2f}'.format(1000*(et-st)))
+    my_print('....Time for downwards pass 2:   {:0.2f}'.format(1000*(et-st)))
     solution_save = solution_ordered.copy()
     # downwards pass 3 - start at top and evaluate neighbor interactions
     st = time.time()
     solution_ordered += SpMV_viaMKL(neighbor_mats, tau_ordered)
     et = time.time()
-    my_print('....Time for downwards pass 3: {:0.2f}'.format(1000*(et-st)))
+    my_print('....Time for downwards pass 3:   {:0.2f}'.format(1000*(et-st)))
     # deorder the solution
     desorter = np.argsort(tree.ordv)
     return solution_ordered[desorter]

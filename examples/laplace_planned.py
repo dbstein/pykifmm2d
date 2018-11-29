@@ -1,4 +1,7 @@
-import pyfmmlib2d
+try:
+	import pyfmmlib2d
+except:
+	pass
 import pykifmm2d
 import numpy as np
 import time
@@ -25,10 +28,10 @@ Laplace_Kernel_Self_Apply = pykifmm2d.kernels.laplace.laplace_kernel_self
 Laplace_Kernel_Form       = pykifmm2d.kernels.laplace.Laplace_Kernel_Form
 Prepare_Functions         = pykifmm2d.fmm.prepare_numba_functions
 
-N_total = 100000
+N_total = 60000
 
 # construct some data to run FMM on
-N_clusters = 0
+N_clusters = 5
 N_per_cluster = 1000
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
@@ -39,7 +42,7 @@ px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
 py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 48
+N_cutoff = 100
 # number of points used in Check/Equivalent Surfaces
 N_equiv = 48
 
@@ -87,9 +90,9 @@ fmm_eval = pykifmm2d.fmm.planned_fmm(fmm_plan, tau)
 time_fmm_eval = (time.time() - st)*1000
 err = np.abs(fmm_eval - reference_eval)
 
-print('FMM planning took:             {:0.1f}'.format(planning_time))
-print('FMM evaluation took:           {:0.1f}'.format(time_fmm_eval))
-print('\nMaximum difference:            {:0.2e}'.format(err.max()))
+print('FMM planning took:               {:0.1f}'.format(planning_time))
+print('FMM evaluation took:             {:0.1f}'.format(time_fmm_eval))
+print('\nMaximum difference:              {:0.2e}'.format(err.max()))
 
 """
 import line_profiler
