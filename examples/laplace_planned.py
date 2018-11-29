@@ -38,7 +38,7 @@ px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
 py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 100
+N_cutoff = 200
 # number of points used in Check/Equivalent Surfaces
 N_equiv = 64
 
@@ -96,5 +96,8 @@ import line_profiler
 %load_ext line_profiler
 %lprun -f pykifmm2d.fmm.fmm_planner fmm_plan = pykifmm2d.fmm.fmm_planner(px, py, N_equiv, N_cutoff, Laplace_Kernel_Form, numba_functions, verbose=True)
 """
+
+fig, ax = plt.subplots()
+fmm_plan.tree.plot(ax, mpl)
 
 

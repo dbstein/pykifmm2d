@@ -563,8 +563,7 @@ def planned_fmm(fmm_plan, tau):
     solution_save = solution_ordered.copy()
     # downwards pass 3 - start at top and evaluate neighbor interactions
     st = time.time()
-    # solution_ordered += neighbor_mats.dot(tau_ordered)
-    solution_ordered += SpMV_viaMKL(neighbor_mats, tau_ordered)
+    solution_ordered += SpMV_viaMKL(neighbor_mats[ind], tau_ordered)
     et = time.time()
     my_print('....Time for downwards pass 3: {:0.2f}'.format(1000*(et-st)))
     # deorder the solution
