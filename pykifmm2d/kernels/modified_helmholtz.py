@@ -1,7 +1,7 @@
 import numpy as np
 import numexpr as ne
 import numba
-from ..misc.numba_special_functions import numba_k0, _numba_k0
+from ..misc.numba_special_functions import numba_k0, _numba_k0#, numba_k0_inplace
 
 def generate_modified_helmholtz_functions(k):
     @numba.njit("(f8[:],f8[:],f8[:],f8[:],f8,f8,f8[:],f8[:])",parallel=True)
@@ -26,7 +26,8 @@ def generate_modified_helmholtz_functions(k):
                     dy = sy[i] - sy[j]
                     d = np.sqrt(dx**2 + dy**2)
                     pot[i] += charge[j]*_numba_k0(k*d)
-    def Modified_Helmholtz_Kernel_Form(sx, sy, tx=None, ty=None):
+    def Modified_Helmholtz_Kernel_Form(sx, sy, tx=None, ty=None, out=None):
+        kk = k
         is_self = tx is None or ty is None
         if is_self:
             tx = sx
@@ -35,12 +36,12 @@ def generate_modified_helmholtz_functions(k):
         nt = tx.shape[0]
         txt = tx[:,None]
         tyt = ty[:,None]
-        G = np.zeros([nt, ns], dtype=float)
-        dx = ne.evaluate('txt - sx')
-        dy = ne.evaluate('tyt - sy')
-        d = ne.evaluate('sqrt(dx**2 + dy**2)')
-        G = numba_k0(k*d)
+        if out is None:
+            out = np.zeros([nt, ns], dtype=float)
+        out = ne.evaluate('kk*sqrt((txt - sx)**2 + (tyt - sy)**2)')
+        out = numba_k0(out)
+        # numba_k0_inplace(out, 0)
         if is_self:
-            np.fill_diagonal(G, 0.0)
-        return G
+            np.fill_diagonal(out, 0.0)
+        return out
     return Modified_Helmholtz_Kernel_Form, modified_helmholtz_kernel, modified_helmholtz_kernel_self

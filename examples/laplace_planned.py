@@ -28,10 +28,10 @@ Laplace_Kernel_Self_Apply = pykifmm2d.kernels.laplace.laplace_kernel_self
 Laplace_Kernel_Form       = pykifmm2d.kernels.laplace.Laplace_Kernel_Form
 Prepare_Functions         = pykifmm2d.fmm.prepare_numba_functions
 
-N_total = 60000
+N_total = 100000
 
 # construct some data to run FMM on
-N_clusters = 5
+N_clusters = 50
 N_per_cluster = 1000
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
@@ -42,7 +42,7 @@ px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
 py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 100
+N_cutoff = 600
 # number of points used in Check/Equivalent Surfaces
 N_equiv = 48
 
@@ -80,6 +80,15 @@ else:
 
 # jit compile internal numba functions
 numba_functions = Prepare_Functions(Laplace_Kernel_Apply, Laplace_Kernel_Self_Apply)
+
+# do my FMM
+st = time.time()
+fmm_eval, tree = pykifmm2d.on_the_fly_fmm(px, py, tau, N_equiv, N_cutoff, \
+                    Laplace_Kernel_Form, numba_functions, verbose=True)
+time_fmm_eval = (time.time() - st)*1000
+err = np.abs(fmm_eval - reference_eval)
+print('\nMaximum difference:              {:0.2e}'.format(err.max()))
+
 # plan fmm
 st = time.time()
 fmm_plan = pykifmm2d.fmm.fmm_planner(px, py, N_equiv, N_cutoff, Laplace_Kernel_Form, numba_functions, verbose=True)
@@ -92,7 +101,7 @@ err = np.abs(fmm_eval - reference_eval)
 
 print('FMM planning took:               {:0.1f}'.format(planning_time))
 print('FMM evaluation took:             {:0.1f}'.format(time_fmm_eval))
-print('\nMaximum difference:              {:0.2e}'.format(err.max()))
+print('Maximum difference:              {:0.2e}'.format(err.max()))
 
 """
 import line_profiler
@@ -106,5 +115,18 @@ import line_profiler
 
 # fig, ax = plt.subplots()
 # fmm_plan.tree.plot(ax, mpl)
+
+import cProfile, pstats, io
+# from pstats import SortKey
+pr = cProfile.Profile()
+pr.enable()
+pykifmm2d.fmm.planned_fmm(fmm_plan, tau)
+pr.disable()
+s = io.StringIO()
+# sortby = SortKey.CUMULATIVE
+ps = pstats.Stats(pr,stream=s).sort_stats('cumulative')
+ps.print_stats()
+print(s.getvalue())
+
 
 

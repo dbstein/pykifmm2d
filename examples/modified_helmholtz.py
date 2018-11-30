@@ -26,11 +26,11 @@ random2 = pykifmm2d.utils.random2
 MH_get = pykifmm2d.kernels.modified_helmholtz.generate_modified_helmholtz_functions
 Prepare_Functions = pykifmm2d.fmm.prepare_numba_functions
 
-N_total = 500000
+N_total = 100000
 helmholtz_k = 0.1
 
 # construct some data to run FMM on
-N_clusters = 5
+N_clusters = 50
 N_per_cluster = 1000
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
@@ -41,9 +41,9 @@ px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
 py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 200
+N_cutoff = 100
 # number of points used in Check/Equivalent Surfaces
-N_equiv = 64
+N_equiv = 48
 
 # get random density
 tau = np.random.rand(N_total)/N_total
@@ -97,8 +97,17 @@ fmm_eval = pykifmm2d.fmm.planned_fmm(fmm_plan, tau)
 time_fmm_eval = (time.time() - st)*1000
 err = np.abs(fmm_eval - reference_eval)
 
-print('FMM planning took:               {:0.1f}'.format(planning_time))
+print('\nFMM planning took:               {:0.1f}'.format(planning_time))
 print('FMM evaluation took:             {:0.1f}'.format(time_fmm_eval))
-print('\nMaximum difference:              {:0.2e}'.format(err.max()))
+print('Maximum difference:              {:0.2e}'.format(err.max()))
 
+"""
+import line_profiler
+%load_ext line_profiler
+%lprun -f pykifmm2d.fmm.planned_fmm pykifmm2d.fmm.planned_fmm(fmm_plan, tau)
+
+import line_profiler
+%load_ext line_profiler
+%lprun -f pykifmm2d.fmm.fmm_planner fmm_plan = pykifmm2d.fmm.fmm_planner(px, py, N_equiv, N_cutoff, MH_Kernel_Form, numba_functions, verbose=True)
+"""
 

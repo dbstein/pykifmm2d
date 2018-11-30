@@ -454,10 +454,14 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
     # generate sparse matrix for neighbor interactions for each level
     st = time.time()
     neighbor_mats = []
+    memory = np.empty([4*Ncutoff,4*Ncutoff], dtype=float)
+    base_ranges = np.arange(4*Ncutoff)
     for Level in tree.Levels:
-        iis = np.empty(10*Ncutoff**2, dtype=int)
-        jjs = np.empty(10*Ncutoff**2, dtype=int)
-        data = np.empty(10*Ncutoff**2, dtype=float)
+        n_data = 0
+        n_data += numba_get_neighbor_length(Level.leaf, Level.ns, Level.colleagues)
+        iis = np.empty(n_data, dtype=int)
+        jjs = np.empty(n_data, dtype=int)
+        data = np.empty(n_data, dtype=float)
         track_val = 0
         for i in range(Level.n_node):
             if Level.leaf[i] and Level.ns[i]>0:
@@ -469,17 +473,18 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
                         bind2 = Level.bot_ind[ci]
                         tind2 = Level.top_ind[ci]
                         if ci == i:
-                            mat = Kernel_Form(tree.x[bind1:tind1], tree.y[bind1:tind1])
+                            mat = memory[:Level.ns[i],:Level.ns[i]]
+                            mat = Kernel_Form(tree.x[bind1:tind1], tree.y[bind1:tind1], out=mat)
                         else:
-                            mat = Kernel_Form(tree.x[bind2:tind2], tree.y[bind2:tind2], tree.x[bind1:tind1], tree.y[bind1:tind1])
-                        jj, ii = np.meshgrid(np.arange(bind2, tind2), np.arange(bind1, tind1))
-                        iis = set_matval(iis, ii.ravel(), track_val)
-                        jjs = set_matval(jjs, jj.ravel(), track_val)
-                        data = set_matval(data, mat.ravel(), track_val)
-                        track_val += ii.ravel().shape[0]
-        iis = iis[:track_val]
-        jjs = jjs[:track_val]
-        data = data[:track_val]
+                            mat = memory[:Level.ns[i],:Level.ns[ci]]
+                            mat = Kernel_Form(tree.x[bind2:tind2], tree.y[bind2:tind2], tree.x[bind1:tind1], tree.y[bind1:tind1], out=mat)
+                        indj = bind2 + base_ranges[:Level.ns[ci]]
+                        indi = bind1 + base_ranges[:Level.ns[i]]
+                        nn = Level.ns[i]*Level.ns[ci]
+                        iis[track_val:track_val+nn] = np.repeat(indi, indj.shape[0])
+                        jjs[track_val:track_val+nn] = np.tile(indj, indi.shape[0])
+                        data[track_val:track_val+nn] = mat.ravel()
+                        track_val += nn
         level_matrix = sp.sparse.coo_matrix((data,(iis,jjs)),shape=[tree.x.shape[0],tree.x.shape[0]])
         neighbor_mats.append(level_matrix.tocsr())
     neighbor_mat = neighbor_mats[0]
@@ -542,6 +547,17 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
 
     fmm_plan = FMM_Plan(tree, theta, large_xs, large_ys, E2C_LUs, M2MC, M2LS, CM2LS, neighbor_mat, upwards_mats, downwards_mats, numba_functions, verbose)
     return fmm_plan
+
+@numba.njit("i8(b1[:],i8[:],i8[:,:])",parallel=False)
+def numba_get_neighbor_length(leaf, ns, colleagues):
+    n = 0
+    for i in range(leaf.shape[0]):
+        if leaf[i] and (ns[i] > 0):
+            for j in range(9):
+                ci = colleagues[i,j]
+                if ci >= 0:
+                    n += ns[ci]*ns[i]
+    return n
 
 def set_matval(xx, xn, ti):
     nn = xn.shape[0]

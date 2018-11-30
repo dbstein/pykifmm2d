@@ -65,7 +65,7 @@ def laplace_kernel_self(sx, sy, charge, pot):
                 pot[i] += charge[j]*temp[j]*scale
 
 
-def Laplace_Kernel_Form(sx, sy, tx=None, ty=None):
+def Laplace_Kernel_Form(sx, sy, tx=None, ty=None, out=None):
     """
     Laplace Kernel Formation
     Computes the matrix:
@@ -89,18 +89,12 @@ def Laplace_Kernel_Form(sx, sy, tx=None, ty=None):
     txt = tx[:,None]
     tyt = ty[:,None]
     scale = -0.5/np.pi
-    G = np.zeros([nt, ns], dtype=float)
-    dx = ne.evaluate('txt - sx')
-    dy = ne.evaluate('tyt - sy')
-    d2 = ne.evaluate('dx**2 + dy**2')
-    G = ne.evaluate('0.5*log(d2)')
-    G *= scale
+    if out is None:
+        out = np.empty([nt, ns], dtype=float)
+    ne.evaluate('scale*0.5*log((txt - sx)**2 + (tyt - sy)**2)', out=out)
     if is_self:
-        np.fill_diagonal(G, 0.0)
-    return G
-
-
-
+        np.fill_diagonal(out, 0.0)
+    return out
 
 # @numba.njit("(f8[:],f8[:],f8[:],f8[:],f8,f8,f8[:],f8[:])",parallel=True)
 # def _laplace_kernel(sx, sy, tx, ty, shiftx, shifty, charge, pot):

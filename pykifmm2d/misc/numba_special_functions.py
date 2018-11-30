@@ -180,13 +180,32 @@ def _numba_k0(x):
         z = 8.0/x - 2.0
         return np.exp(-x)*_numba_chbevl(z, k0_gt2)/np.sqrt(x)
 
-@numba.njit(["f8[:](f8[:])", "f8[:,:](f8[:,:])", "f8[:,:,:](f8[:,:,:])"],parallel=True)
+# @numba.njit(["f8[:](f8[:])", "f8[:,:](f8[:,:])", "f8[:,:,:](f8[:,:,:])"],parallel=True)
+# def numba_k0(x):
+#     sh = x.shape
+#     N = np.prod(np.array(sh))
+#     x = x.ravel()
+#     out = np.empty_like(x)
+#     for i in numba.prange(N):
+#         out[i] = _numba_k0(x[i])
+#     return out.reshape(sh)
+
+@numba.vectorize("f8(f8)")
 def numba_k0(x):
-    sh = x.shape
-    N = np.prod(np.array(sh))
-    x = x.ravel()
-    out = np.empty_like(x)
-    for i in numba.prange(N):
-        out[i] = _numba_k0(x[i])
-    return out.reshape(sh)
+    return _numba_k0(x)
+
+# @numba.njit("(f8[:,:], i8)", parallel=True)
+# def numba_k0_inplace(x, dummy):
+#     sh = x.shape
+#     for i in numba.prange(sh[0]):
+#         for j in range(sh[1]):
+#             x[i,j] = _numba_k0(x[i,j])
+
+# @numba.njit(["(f8[:], i8)", "(f8[:,:], i8)", "(f8[:,:,:], i8)"], parallel=True)
+# def numba_k0_inplace(x, dummy):
+#     sh = x.shape
+#     N = np.prod(np.array(sh))
+#     x = x.ravel()
+#     for i in numba.prange(N):
+#         x[i] = _numba_k0(x[i])
 
