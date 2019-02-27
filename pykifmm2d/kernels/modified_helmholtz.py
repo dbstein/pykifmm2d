@@ -4,6 +4,9 @@ import numba
 from ..misc.numba_special_functions import numba_k0, _numba_k0#, numba_k0_inplace
 
 def generate_modified_helmholtz_functions(k):
+    @numba.njit("f8(f8,f8,f8,f8)")
+    def modified_helmholtz_eval(sx, sy, tx, ty):
+        return _numba_k0(k*np.sqrt((tx-sx)**2 + (ty-sy)**2))
     @numba.njit("(f8[:],f8[:],f8[:],f8[:],f8,f8,f8[:],f8[:])",parallel=True)
     def modified_helmholtz_kernel(sx, sy, tx, ty, shiftx, shifty, charge, pot):
         ns = sx.shape[0]
@@ -44,4 +47,4 @@ def generate_modified_helmholtz_functions(k):
         if is_self:
             np.fill_diagonal(out, 0.0)
         return out
-    return Modified_Helmholtz_Kernel_Form, modified_helmholtz_kernel, modified_helmholtz_kernel_self
+    return Modified_Helmholtz_Kernel_Form, modified_helmholtz_kernel, modified_helmholtz_kernel_self, modified_helmholtz_eval

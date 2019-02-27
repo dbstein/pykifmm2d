@@ -9,7 +9,7 @@ from .misc.mkl_sparse import SpMV_viaMKL
 
 def get_level_information(node_width, theta):
     # get information for this level
-    dd = 0.1
+    dd = 0.01
     r1 = 0.5*node_width*(np.sqrt(2)+dd)
     r2 = 0.5*node_width*(4-np.sqrt(2)-2*dd)
     small_surface_x_base = r1*np.cos(theta)
@@ -87,7 +87,7 @@ def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, Kernel_Form, numba_functions, ver
     my_print('FMM completed in               {:0.1f}'.format(fmm_time))
     return solution, tree
 
-def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply):
+def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
     @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True)
     def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
         n = botind.shape[0]
@@ -104,6 +104,49 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply):
                             Kernel_Self_Apply(x[bind1:tind1], y[bind1:tind1], tau[bind1:tind1], sol[bind1:tind1])
                         else:
                             Kernel_Apply(x[bind2:tind2], y[bind2:tind2], x[bind1:tind1], y[bind1:tind1], 0.0, 0.0, tau[bind2:tind2], sol[bind1:tind1])
+
+    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],i8[:],i8[:,:],i8,i8[:],i8[:],f8[:])", parallel=True)
+    def build_neighbor_interactions(x, y, leaf, ns, botind, topind, colleagues, n_data, iis, jjs, data):
+        n = botind.shape[0]
+        leaf_vals = np.zeros(n, dtype=np.int64)
+        for i in range(n):
+            track_val = 0
+            if leaf[i]:
+                for j in range(9):
+                    ci = colleagues[i,j]
+                    if ci >= 0:
+                        leaf_vals[i] += ns[i]*ns[ci]
+        start_vals = np.empty(n, dtype=np.int64)
+        start_vals[0] = 0
+        for i in range(1,n):
+            start_vals[i] = start_vals[i-1] + leaf_vals[i-1]
+        for i in numba.prange(n):
+            track_val = 0
+            if leaf[i]:
+                bind1 = botind[i]
+                tind1 = topind[i]
+                n1 = tind1 - bind1
+                for j in range(9):
+                    ci = colleagues[i,j]
+                    if ci >= 0:
+                        if ci == i:
+                            for iki, ki in enumerate(range(bind1, tind1)):
+                                for ikj, kj in enumerate(range(bind1, tind1)):
+                                    if ki != kj:
+                                        data[start_vals[i]+track_val+ikj*n1+iki] = Kernel_Eval(x[kj],y[kj],x[ki],y[ki])
+                                        iis[start_vals[i]+track_val+ikj*n1+iki] = ki
+                                        jjs[start_vals[i]+track_val+ikj*n1+iki] = kj
+                            track_val += n1*n1
+                        else:
+                            bind2 = botind[ci]
+                            tind2 = topind[ci]
+                            n2 = tind2 - bind2
+                            for iki, ki in enumerate(range(bind1, tind1)):
+                                for ikj, kj in enumerate(range(bind2, tind2)):
+                                    data[start_vals[i]+track_val+ikj*n1+iki] = Kernel_Eval(x[kj],y[kj],x[ki],y[ki])
+                                    iis[start_vals[i]+track_val+ikj*n1+iki] = ki
+                                    jjs[start_vals[i]+track_val+ikj*n1+iki] = kj
+                            track_val += n1*n2
 
     @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])",parallel=True)
     def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
@@ -122,13 +165,13 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply):
                 bi = botind[i]
                 ti = topind[i]
                 Kernel_Apply(xsrc, ysrc, x[bi:ti], y[bi:ti], -xmid[i], -ymid[i], local_expansions[i], sol[bi:ti])
-    return evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2
+    return evaluate_neighbor_interactions, build_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2
 
 def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose):
     my_print = get_print_function(verbose)
 
-    (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2) \
-        = numba_functions
+    (evaluate_neighbor_interactions, build_neighbor_interactions, \
+         numba_upwards_pass, numba_downwards_pass2) = numba_functions
 
     # allocate workspace in tree
     if not tree.workspace_allocated:
@@ -243,9 +286,10 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose):
         # check if there is a level below us, if there is, lift all its expansions
         if ind != tree.levels-1:
             ancestor_level = tree.Levels[ind+1]
+        if ind != tree.levels-1:
+            ancestor_level = tree.Levels[ind+1]
             temp1 = M2MC[ind].dot(ancestor_level.RSEQD.T).T
-            for ii in range(int(ancestor_level.n_node/4)):
-                u_check_surfaces[ancestor_level.short_parent_ind[ii]] = temp1[ii]
+            numba_distribute(u_check_surfaces, temp1, ancestor_level.short_parent_ind, int(ancestor_level.n_node/4))
         numba_upwards_pass(tree.x, tree.y, Level.bot_ind, Level.top_ind, Level.ns, Level.compute_upwards, large_xs[ind], large_ys[ind], Level.xmid, Level.ymid, tau_ordered, u_check_surfaces)
         Level.Equiv_Densities[:] = sp.linalg.lu_solve(E2C_LUs[ind], u_check_surfaces.T).T
     et = time.time()
@@ -341,6 +385,9 @@ class FMM_Plan(object):
 def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=False):
     my_print = get_print_function(verbose)
     my_print('\nPlanning FMM')
+
+    (evaluate_neighbor_interactions, build_neighbor_interactions, \
+         numba_upwards_pass, numba_downwards_pass2) = numba_functions
 
     # building a tree
     st = time.time()
@@ -457,34 +504,35 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
     memory = np.empty([4*Ncutoff,4*Ncutoff], dtype=float)
     base_ranges = np.arange(4*Ncutoff)
     for Level in tree.Levels:
-        n_data = 0
-        n_data += numba_get_neighbor_length(Level.leaf, Level.ns, Level.colleagues)
-        iis = np.empty(n_data, dtype=int)
-        jjs = np.empty(n_data, dtype=int)
-        data = np.empty(n_data, dtype=float)
-        track_val = 0
-        for i in range(Level.n_node):
-            if Level.leaf[i] and Level.ns[i]>0:
-                bind1 = Level.bot_ind[i]
-                tind1 = Level.top_ind[i]
-                for j in range(9):
-                    ci = Level.colleagues[i,j]
-                    if ci >= 0:
-                        bind2 = Level.bot_ind[ci]
-                        tind2 = Level.top_ind[ci]
-                        if ci == i:
-                            mat = memory[:Level.ns[i],:Level.ns[i]]
-                            mat = Kernel_Form(tree.x[bind1:tind1], tree.y[bind1:tind1], out=mat)
-                        else:
-                            mat = memory[:Level.ns[i],:Level.ns[ci]]
-                            mat = Kernel_Form(tree.x[bind2:tind2], tree.y[bind2:tind2], tree.x[bind1:tind1], tree.y[bind1:tind1], out=mat)
-                        indj = bind2 + base_ranges[:Level.ns[ci]]
-                        indi = bind1 + base_ranges[:Level.ns[i]]
-                        nn = Level.ns[i]*Level.ns[ci]
-                        iis[track_val:track_val+nn] = np.repeat(indi, indj.shape[0])
-                        jjs[track_val:track_val+nn] = np.tile(indj, indi.shape[0])
-                        data[track_val:track_val+nn] = mat.ravel()
-                        track_val += nn
+        n_data = numba_get_neighbor_length(Level.leaf, Level.ns, Level.colleagues)
+        iis = np.zeros(n_data, dtype=int)
+        jjs = np.zeros(n_data, dtype=int)
+        data = np.zeros(n_data, dtype=float)
+        build_neighbor_interactions(tree.x, tree.y, Level.leaf, Level.ns,
+            Level.bot_ind, Level.top_ind, Level.colleagues, n_data, iis, jjs, data)
+        # track_val = 0
+        # for i in range(Level.n_node):
+        #     if Level.leaf[i] and Level.ns[i]>0:
+        #         bind1 = Level.bot_ind[i]
+        #         tind1 = Level.top_ind[i]
+        #         for j in range(9):
+        #             ci = Level.colleagues[i,j]
+        #             if ci >= 0:
+        #                 bind2 = Level.bot_ind[ci]
+        #                 tind2 = Level.top_ind[ci]
+        #                 if ci == i:
+        #                     mat = memory[:Level.ns[i],:Level.ns[i]]
+        #                     mat = Kernel_Form(tree.x[bind1:tind1], tree.y[bind1:tind1], out=mat)
+        #                 else:
+        #                     mat = memory[:Level.ns[i],:Level.ns[ci]]
+        #                     mat = Kernel_Form(tree.x[bind2:tind2], tree.y[bind2:tind2], tree.x[bind1:tind1], tree.y[bind1:tind1], out=mat)
+        #                 indj = bind2 + base_ranges[:Level.ns[ci]]
+        #                 indi = bind1 + base_ranges[:Level.ns[i]]
+        #                 nn = Level.ns[i]*Level.ns[ci]
+        #                 iis[track_val:track_val+nn] = np.repeat(indi, indj.shape[0])
+        #                 jjs[track_val:track_val+nn] = np.tile(indj, indi.shape[0])
+        #                 data[track_val:track_val+nn] = mat.ravel()
+        #                 track_val += nn
         level_matrix = sp.sparse.coo_matrix((data,(iis,jjs)),shape=[tree.x.shape[0],tree.x.shape[0]])
         neighbor_mats.append(level_matrix.tocsr())
     neighbor_mat = neighbor_mats[0]
@@ -581,8 +629,8 @@ def planned_fmm(fmm_plan, tau):
     Nequiv = theta.shape[0]
 
     my_print = get_print_function(verbose)
-    (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2) \
-        = numba_functions
+    (evaluate_neighbor_interactions, build_neighbor_interactions, \
+         numba_upwards_pass, numba_downwards_pass2) = numba_functions
 
     my_print('Executing FMM')
 

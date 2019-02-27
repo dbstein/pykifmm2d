@@ -2,6 +2,10 @@ import numpy as np
 import numexpr as ne
 import numba
 
+@numba.njit("f8(f8,f8,f8,f8)")
+def laplace_eval(sx, sy, tx, ty):
+    return -0.25*np.log((tx-sx)**2 + (ty-sy)**2)/np.pi
+
 @numba.njit("(f8[:],f8[:],f8[:],f8[:],f8,f8,f8[:],f8[:])",parallel=True)
 def laplace_kernel(sx, sy, tx, ty, shiftx, shifty, charge, pot):
     """

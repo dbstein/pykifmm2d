@@ -6,6 +6,7 @@ import pykifmm2d
 import numpy as np
 import time
 import matplotlib as mpl
+mpl.use('TkAgg')
 import matplotlib.pyplot as plt
 plt.ion()
 
@@ -30,8 +31,8 @@ N_total = 100000
 helmholtz_k = 0.1
 
 # construct some data to run FMM on
-N_clusters = 50
-N_per_cluster = 1000
+N_clusters = 5
+N_per_cluster = 10000
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
 px, py = random2(N_total, -1, 1)
@@ -43,7 +44,7 @@ py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 # maximum number of points in each leaf of tree for FMM
 N_cutoff = 100
 # number of points used in Check/Equivalent Surfaces
-N_equiv = 48
+N_equiv = 32
 
 # get random density
 tau = np.random.rand(N_total)/N_total
@@ -51,7 +52,7 @@ tau = np.random.rand(N_total)/N_total
 print('\nModified Helmholtz Kernel Direct vs. FMM demonstration with', N_total, 'points.')
 
 # get helmholtz functions
-MH_Kernel_Form, MH_Kernel_Apply, MH_Kernel_Self_Apply = MH_get(helmholtz_k)
+MH_Kernel_Form, MH_Kernel_Apply, MH_Kernel_Self_Apply, MH_Kernel_Eval = MH_get(helmholtz_k)
 
 # get reference solution
 reference = True
@@ -77,7 +78,7 @@ else:
 		reference = False
 
 # jit compile internal numba functions
-numba_functions = Prepare_Functions(MH_Kernel_Apply, MH_Kernel_Self_Apply)
+numba_functions = Prepare_Functions(MH_Kernel_Apply, MH_Kernel_Self_Apply, MH_Kernel_Eval)
 # do on-the-fly FMM
 st = time.time()
 fmm_eval, tree = pykifmm2d.on_the_fly_fmm(px, py, tau, N_equiv, N_cutoff, \

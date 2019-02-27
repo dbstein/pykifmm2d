@@ -26,13 +26,14 @@ random2 = pykifmm2d.utils.random2
 Laplace_Kernel_Apply      = pykifmm2d.kernels.laplace.laplace_kernel
 Laplace_Kernel_Self_Apply = pykifmm2d.kernels.laplace.laplace_kernel_self
 Laplace_Kernel_Form       = pykifmm2d.kernels.laplace.Laplace_Kernel_Form
+Laplace_Kernel_Eval       = pykifmm2d.kernels.laplace.laplace_eval
 Prepare_Functions         = pykifmm2d.fmm.prepare_numba_functions
 
-N_total = 100000
+N_total = 600000
 
 # construct some data to run FMM on
-N_clusters = 50
-N_per_cluster = 1000
+N_clusters = 4
+N_per_cluster = 10000
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
 px, py = random2(N_total, -1, 1)
@@ -42,7 +43,7 @@ px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
 py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 600
+N_cutoff = 100
 # number of points used in Check/Equivalent Surfaces
 N_equiv = 48
 
@@ -79,7 +80,7 @@ else:
 		reference = False
 
 # jit compile internal numba functions
-numba_functions = Prepare_Functions(Laplace_Kernel_Apply, Laplace_Kernel_Self_Apply)
+numba_functions = Prepare_Functions(Laplace_Kernel_Apply, Laplace_Kernel_Self_Apply, Laplace_Kernel_Eval)
 
 # do my FMM
 st = time.time()
@@ -116,17 +117,17 @@ import line_profiler
 # fig, ax = plt.subplots()
 # fmm_plan.tree.plot(ax, mpl)
 
-import cProfile, pstats, io
-# from pstats import SortKey
-pr = cProfile.Profile()
-pr.enable()
-pykifmm2d.fmm.planned_fmm(fmm_plan, tau)
-pr.disable()
-s = io.StringIO()
-# sortby = SortKey.CUMULATIVE
-ps = pstats.Stats(pr,stream=s).sort_stats('cumulative')
-ps.print_stats()
-print(s.getvalue())
+# import cProfile, pstats, io
+# # from pstats import SortKey
+# pr = cProfile.Profile()
+# pr.enable()
+# pykifmm2d.fmm.planned_fmm(fmm_plan, tau)
+# pr.disable()
+# s = io.StringIO()
+# # sortby = SortKey.CUMULATIVE
+# ps = pstats.Stats(pr,stream=s).sort_stats('cumulative')
+# ps.print_stats()
+# print(s.getvalue())
 
 
 
