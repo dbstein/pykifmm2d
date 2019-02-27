@@ -347,18 +347,20 @@ def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M
             for j in range(9):
                 ci = colleagues[i,j]
                 if ci >= 0 and ci != i:
-                    if abs(xmid[i] - xmid[ci]) < 1e-14:
-                        xdist = 0
-                    elif xmid[i] - xmid[ci] < 0:
-                        xdist = 1
-                    else:
-                        xdist = -1
-                    if abs(ymid[i] - ymid[ci]) < 1e-14:
-                        ydist = 0
-                    elif ymid[i] - ymid[ci] < 0:
-                        ydist = 1
-                    else:
-                        ydist = -1
+                    xdist = int(np.sign(xmid[ci]-xmid[i]))
+                    ydist = int(np.sign(ymid[ci]-ymid[i]))
+                    # if abs(xmid[i] - xmid[ci]) < 1e-14:
+                        # xdist = 0
+                    # elif xmid[i] - xmid[ci] < 0:
+                        # xdist = 1
+                    # else:
+                        # xdist = -1
+                    # if abs(ymid[i] - ymid[ci]) < 1e-14:
+                        # ydist = 0
+                    # elif ymid[i] - ymid[ci] < 0:
+                        # ydist = 1
+                    # else:
+                        # ydist = -1
                     di = ci4[ci]
                     for k in range(4):
                         Local_Solutions[4*dii+k] += \
