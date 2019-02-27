@@ -362,9 +362,13 @@ def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M
                     # else:
                         # ydist = -1
                     di = ci4[ci]
+                    # for k in range(4):
+                    #     Local_Solutions[4*dii+k] += \
+                    #         M2Ms[xdist+1,ydist+1,di,k*Nequiv:(k+1)*Nequiv]
                     for k in range(4):
-                        Local_Solutions[4*dii+k] += \
-                            M2Ms[xdist+1,ydist+1,di,k*Nequiv:(k+1)*Nequiv]
+                        for ll in range(Local_Solutions.shape[1]):
+                            Local_Solutions[4*dii+k, ll] += \
+                                M2Ms[xdist+1,ydist+1,di,k*Nequiv+ll]
 
 class FMM_Plan(object):
     def __init__(self, tree, theta, large_xs, large_ys, E2C_LUs, M2MC, M2LS, CM2LS, neighbor_mats, upwards_mats, downwards_mats, numba_functions, verbose):
