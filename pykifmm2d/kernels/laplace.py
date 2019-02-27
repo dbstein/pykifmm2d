@@ -69,6 +69,68 @@ def laplace_kernel_self(sx, sy, charge, pot):
                 pot[i] += charge[j]*temp[j]*scale
 
 
+@numba.njit("(f8[:],f8[:],f8[:],f8[:],f8,f8,f8[:],f8[:])",parallel=False)
+def laplace_kernel_serial(sx, sy, tx, ty, shiftx, shifty, charge, pot):
+    """
+    Numba-jitted Laplace Kernel
+    Incoming: charge
+    Outgoing: potential
+    This assumes no overlaps between source and target points
+    Inputs:
+        sx,     intent(in),  float(ns), x-coordinates of source
+        sy,     intent(in),  float(ns), y-coordinates of source
+        tx,     intent(in),  float(nt), x-coordinates of target
+        ty,     intent(in),  float(nt), y-coordinates of target
+        shiftx, intent(in),  float,     target shift in x-direction
+        shifty, intent(in),  float,     target shift in y-direction
+        charge, intent(in),  float(ns), charge at source locations
+        pot,    intent(out), float(nt), potential at target locations
+    ns = number of source points; nt = number of target points
+    all inputs are required
+    """
+    ns = sx.shape[0]
+    nt = tx.shape[0]
+    scale = -0.25/np.pi
+    for i in range(nt):
+        temp = np.zeros(ns)
+        for j in range(ns):
+            dx = tx[i] + shiftx - sx[j]
+            dy = ty[i] + shifty - sy[j]
+            temp[j] = dx**2 + dy**2
+        for j in range(ns):
+            temp[j] = np.log(temp[j])
+        for j in range(ns):
+            pot[i] += charge[j]*temp[j]*scale
+@numba.njit("(f8[:],f8[:],f8[:],f8[:])",parallel=False)
+def laplace_kernel_self_serial(sx, sy, charge, pot):
+    """
+    Numba-jitted Laplace Kernel
+    Incoming: charge
+    Outgoing: potential
+    This assumes no overlaps between source and target points
+        other than the diagonal term, which is ignored
+    Inputs:
+        sx,     intent(in),  float(ns), x-coordinates of source
+        sy,     intent(in),  float(ns), y-coordinates of source
+        charge, intent(in),  float(ns), charge at source locations
+        pot,    intent(out), float(ns), potential at target locations
+    ns = number of source points
+    all inputs are required
+    """
+    ns = sx.shape[0]
+    scale = -0.25/np.pi
+    for i in range(ns):
+        temp = np.zeros(ns)
+        for j in range(ns):
+            dx = sx[i] - sx[j]
+            dy = sy[i] - sy[j]
+            temp[j] = dx**2 + dy**2
+        for j in range(ns):
+            temp[j] = np.log(temp[j])
+        for j in range(ns):
+            if i != j:
+                pot[i] += charge[j]*temp[j]*scale
+
 def Laplace_Kernel_Form(sx, sy, tx=None, ty=None, out=None):
     """
     Laplace Kernel Formation
