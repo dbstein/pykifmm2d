@@ -91,7 +91,7 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
     @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True)
     def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
         n = botind.shape[0]
-        for i in range(n):
+        for i in numba.prange(n):
             if leaf[i]:
                 bind1 = botind[i]
                 tind1 = topind[i]
@@ -151,7 +151,7 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
     @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])",parallel=True)
     def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
         n = botind.shape[0]
-        for i in range(n):
+        for i in numba.prange(n):
             if compute_upwards[i] and (ns[i] > 0):
                 bi = botind[i]
                 ti = topind[i]
@@ -160,7 +160,7 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
     @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:,:],f8[:])",parallel=True)
     def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
         n = botind.shape[0]
-        for i in range(n):
+        for i in numba.prange(n):
             if leaf[i] and (ns[i] > 0):
                 bi = botind[i]
                 ti = topind[i]

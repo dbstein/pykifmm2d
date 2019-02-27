@@ -27,12 +27,12 @@ random2 = pykifmm2d.utils.random2
 MH_get = pykifmm2d.kernels.modified_helmholtz.generate_modified_helmholtz_functions
 Prepare_Functions = pykifmm2d.fmm.prepare_numba_functions
 
-N_total = 100000
+N_total = 10000
 helmholtz_k = 0.1
 
 # construct some data to run FMM on
 N_clusters = 5
-N_per_cluster = 10000
+N_per_cluster = 1000
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
 px, py = random2(N_total, -1, 1)
@@ -56,7 +56,8 @@ MH_Kernel_Form, MH_Kernel_Apply, MH_Kernel_Self_Apply, MH_Kernel_Eval = MH_get(h
 
 # get reference solution
 reference = True
-if N_total <= 50000:
+# if N_total <= 50000:
+if False:
 	# by Direct Sum
 	st = time.time()
 	reference_eval = np.zeros(N_total, dtype=float)
