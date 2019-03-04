@@ -310,14 +310,14 @@ class Level(object):
         self.not_leaf = np.logical_not(self.leaf)
     def tag_colleagues(self, ancestor=None):
         self.colleagues = -np.ones([self.n_node, 9], dtype=int)
-        self.direct_tag_colleagues()
+        # self.direct_tag_colleagues()
         #### NEED TO FIX THE ANCESTOR TAG to deal with fake leaves...
-        # if self.n_node < tree_search_crossover:
-            # self.direct_tag_colleagues()
-        # elif ancestor is None:
-            # self.ckdtree_tag_colleagues()
-        # else:
-            # self.ancestor_tag_colleagues(ancestor)
+        if self.n_node < tree_search_crossover:
+            self.direct_tag_colleagues()
+        elif ancestor is None:
+            self.ckdtree_tag_colleagues()
+        else:
+            self.ancestor_tag_colleagues(ancestor)
     def direct_tag_colleagues(self):
         dist = 1.5*self.width
         numba_tag_colleagues(self.xmid, self.ymid, self.colleagues, dist)
@@ -330,8 +330,11 @@ class Level(object):
             self.colleagues[ind,:len(clist)] = clist
     def ancestor_tag_colleagues(self, ancestor):
         dist = 1.5*self.width
+        leaf_here = ancestor.children_ind < 0
+        # numba_loop_colleagues(self.xmid, self.ymid, dist, self.parent_ind, 
+            # ancestor.colleagues, ancestor.leaf, ancestor.children_ind, self.colleagues)
         numba_loop_colleagues(self.xmid, self.ymid, dist, self.parent_ind, 
-            ancestor.colleagues, ancestor.leaf, ancestor.children_ind, self.colleagues)
+            ancestor.colleagues, leaf_here, ancestor.children_ind, self.colleagues)
     def construct_midpoint_tree(self):
         if not hasattr(self, 'midpoint_tree'):
             midpoint_data = np.column_stack([self.xmid, self.ymid])
@@ -397,7 +400,7 @@ def numba_get_Xlist(depths, colleagues, leaf, Xlist):
             XlistI = False
             for j in range(9):
                 cj = colleagues[i,j]
-                if cj >=0:
+                if cj >= 0 and cj < n:
                     level_dist = depths[i]-depths[cj]
                     if level_dist < 0:
                         XlistI = True
@@ -460,54 +463,6 @@ class Tree(object):
         self.split_Xlist()
         # get not leaves
         self.get_not_leaves()
-    def plot(self, ax, mpl, points=False, **kwargs):
-        """
-        Create a simple plot to visualize the tree
-        Inputs:
-            ax,     axis, required: on which to plot things
-            mpl,    handle to matplotlib import
-            points, bool, optional: whether to also scatter the points
-        """
-        if points:
-            ax.scatter(self.x, self.y, color='red', **kwargs)
-        lines = []
-        clines = []
-        for level in self.Levels:
-            nleaves = np.sum(level.leaf)
-            xls = level.xmin[level.leaf]
-            xhs = level.xmax[level.leaf]
-            yls = level.ymin[level.leaf]
-            yhs = level.ymax[level.leaf]
-            lines.extend([[(xls[i], yls[i]), (xls[i], yhs[i])] for i in range(nleaves)])
-            lines.extend([[(xhs[i], yls[i]), (xhs[i], yhs[i])] for i in range(nleaves)])
-            lines.extend([[(xls[i], yls[i]), (xhs[i], yls[i])] for i in range(nleaves)])
-            lines.extend([[(xls[i], yhs[i]), (xhs[i], yhs[i])] for i in range(nleaves)])
-        lc = mpl.collections.LineCollection(lines, colors='black')
-        ax.add_collection(lc)
-        try:
-            for ind in range(1, self.levels-1):
-                level = self.Levels[ind]
-                nxlist = np.sum(level.Xlist)
-                xls = level.xmin[level.Xlist]
-                xms = level.xmid[level.Xlist]
-                xhs = level.xmax[level.Xlist]
-                yls = level.ymin[level.Xlist]
-                yms = level.ymid[level.Xlist]
-                yhs = level.ymax[level.Xlist]
-                clines.extend([[(xms[i], yls[i]), (xms[i], yhs[i])] for i in range(nxlist)])
-                clines.extend([[(xls[i], yms[i]), (xhs[i], yms[i])] for i in range(nxlist)])
-            clc = mpl.collections.LineCollection(clines, colors='gray', alpha=0.25)
-            ax.add_collection(clc)
-        except:
-            pass
-        ax.set_xlim(self.xmin, self.xmax)
-        ax.set_ylim(self.ymin, self.ymax)
-    def print_structure(self):
-        """
-        Prints the stucture of the array (# levels, # leaves per level)
-        """
-        for ind, Level in enumerate(self.Levels):
-            print('Level', ind+1, 'of', self.levels, 'has', Level.n_node, 'nodes.')
     def tag_colleagues(self):
         """
         Tag colleagues (neighbors at same level) for every node in tree
@@ -557,5 +512,110 @@ class Tree(object):
         for Level in self.Levels[1:]:
             Level.allocate_workspace(Nequiv)
         self.workspace_allocated = True
+    """
+    Information functions
+    """
+    def plot(self, ax, mpl, points=False, **kwargs):
+        """
+        Create a simple plot to visualize the tree
+        Inputs:
+            ax,     axis, required: on which to plot things
+            mpl,    handle to matplotlib import
+            points, bool, optional: whether to also scatter the points
+        """
+        if points:
+            ax.scatter(self.x, self.y, color='red', **kwargs)
+        lines = []
+        clines = []
+        for level in self.Levels:
+            nleaves = np.sum(level.leaf)
+            xls = level.xmin[level.leaf]
+            xhs = level.xmax[level.leaf]
+            yls = level.ymin[level.leaf]
+            yhs = level.ymax[level.leaf]
+            lines.extend([[(xls[i], yls[i]), (xls[i], yhs[i])] for i in range(nleaves)])
+            lines.extend([[(xhs[i], yls[i]), (xhs[i], yhs[i])] for i in range(nleaves)])
+            lines.extend([[(xls[i], yls[i]), (xhs[i], yls[i])] for i in range(nleaves)])
+            lines.extend([[(xls[i], yhs[i]), (xhs[i], yhs[i])] for i in range(nleaves)])
+        lc = mpl.collections.LineCollection(lines, colors='black')
+        ax.add_collection(lc)
+        try:
+            for ind in range(1, self.levels-1):
+                level = self.Levels[ind]
+                nxlist = np.sum(level.Xlist)
+                xls = level.xmin[level.Xlist]
+                xms = level.xmid[level.Xlist]
+                xhs = level.xmax[level.Xlist]
+                yls = level.ymin[level.Xlist]
+                yms = level.ymid[level.Xlist]
+                yhs = level.ymax[level.Xlist]
+                clines.extend([[(xms[i], yls[i]), (xms[i], yhs[i])] for i in range(nxlist)])
+                clines.extend([[(xls[i], yms[i]), (xhs[i], yms[i])] for i in range(nxlist)])
+            clc = mpl.collections.LineCollection(clines, colors='gray', alpha=0.25)
+            ax.add_collection(clc)
+        except:
+            pass
+        ax.set_xlim(self.xmin, self.xmax)
+        ax.set_ylim(self.ymin, self.ymax)
+    def plot_level(self, ax, mpl, level, **kwargs):
+        """
+        Create a simple plot to visualize a level of a tree
+        Inputs:
+            ax,     axis, required: on which to plot things
+            mpl,    handle to matplotlib import
+        """
+        if not isinstance(level, int) or level < 1:
+            raise Exception('Level must be an integer and at least 1')
+        lines = []
+        clines = []
+        lev = self.Levels[level-1]
+        n_node = lev.n_node
+        xls = lev.xmin
+        xhs = lev.xmax
+        yls = lev.ymin
+        yhs = lev.ymax
+        # plot the edges
+        lines.extend([[(xls[i], yls[i]), (xls[i], yhs[i])] for i in range(n_node)])
+        lines.extend([[(xhs[i], yls[i]), (xhs[i], yhs[i])] for i in range(n_node)])
+        lines.extend([[(xls[i], yls[i]), (xhs[i], yls[i])] for i in range(n_node)])
+        lines.extend([[(xls[i], yhs[i]), (xhs[i], yhs[i])] for i in range(n_node)])
+        lc = mpl.collections.LineCollection(lines, color='black', linewidth=3)
+        ax.add_collection(lc)
+        # now add colleagues...
+        lines = []
+        for i in range(n_node):
+            this_x_mid = lev.xmid[i]
+            this_y_mid = lev.ymid[i]
+            col = lev.colleagues[i]
+            col = col[col != -1]
+            col = col[col != i]
+            ll = [[(this_x_mid, this_y_mid), (lev.xmid[j], lev.ymid[j])] for j in col]
+            lines.extend(ll)
+        lc = mpl.collections.LineCollection(lines, linewidth=1)
+        ax.add_collection(lc)
+        # try:
+        #     for ind in range(1, self.levels-1):
+        #         level = self.Levels[ind]
+        #         nxlist = np.sum(level.Xlist)
+        #         xls = level.xmin[level.Xlist]
+        #         xms = level.xmid[level.Xlist]
+        #         xhs = level.xmax[level.Xlist]
+        #         yls = level.ymin[level.Xlist]
+        #         yms = level.ymid[level.Xlist]
+        #         yhs = level.ymax[level.Xlist]
+        #         clines.extend([[(xms[i], yls[i]), (xms[i], yhs[i])] for i in range(nxlist)])
+        #         clines.extend([[(xls[i], yms[i]), (xhs[i], yms[i])] for i in range(nxlist)])
+        #     clc = mpl.collections.LineCollection(clines, colors='gray', alpha=0.25)
+        #     ax.add_collection(clc)
+        # except:
+        #     pass
+        ax.set_xlim(self.xmin, self.xmax)
+        ax.set_ylim(self.ymin, self.ymax)
+    def print_structure(self):
+        """
+        Prints the stucture of the array (# levels, # leaves per level)
+        """
+        for ind, Level in enumerate(self.Levels):
+            print('Level', ind+1, 'of', self.levels, 'has', Level.n_node, 'nodes.')
 
 
