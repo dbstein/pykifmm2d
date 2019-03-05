@@ -152,16 +152,21 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
     def build_upwards_pass(x, y, botind, topind, xmid, ymid, xring, yring, iis, jjs, data, doit, track_val):
         n = botind.shape[0]
         n1 = xring.shape[0]
-        for i in range(n):
+        start_vals = np.empty(n, dtype=np.int64)
+        start_vals[0] = 0
+        for i in range(1,n):
+            adder = n1*(topind[i-1]-botind[i-1]) if doit[i-1] else 0
+            start_vals[i] = start_vals[i-1] + adder
+        for i in numba.prange(n):
             if doit[i]:
                 bi = botind[i]
                 ti = topind[i]
                 n2 = ti - bi
                 for ki in range(n1):
                     for ikj, kj in enumerate(range(bi, ti)):
-                        data[track_val+ki*n2+ikj] = Kernel_Eval(x[kj],y[kj],xring[ki]+xmid[i],yring[ki]+ymid[i])
-                        iis [track_val+ki*n2+ikj] = ki + i*n1
-                        jjs [track_val+ki*n2+ikj] = kj
+                        data[start_vals[i]+ki*n2+ikj] = Kernel_Eval(x[kj],y[kj],xring[ki]+xmid[i],yring[ki]+ymid[i])
+                        iis [start_vals[i]+ki*n2+ikj] = ki + i*n1
+                        jjs [start_vals[i]+ki*n2+ikj] = kj
                 track_val += n1*n2
         return track_val
 
