@@ -29,7 +29,7 @@ def generate_modified_helmholtz_functions(k):
                     dy = sy[i] - sy[j]
                     d = np.sqrt(dx**2 + dy**2)
                     pot[i] += charge[j]*_numba_k0(k*d)
-    @numba.njit("(f8[:],f8[:],f8[:],f8[:],f8,f8,f8[:],f8[:])",parallel=True)
+    @numba.njit("(f8[:],f8[:],f8[:],f8[:],f8,f8,f8[:],f8[:])")
     def modified_helmholtz_kernel_serial(sx, sy, tx, ty, shiftx, shifty, charge, pot):
         ns = sx.shape[0]
         nt = tx.shape[0]
@@ -39,7 +39,7 @@ def generate_modified_helmholtz_functions(k):
                 dy = ty[i] + shifty - sy[j]
                 d = np.sqrt(dx**2 + dy**2)
                 pot[i] += charge[j]*_numba_k0(k*d)
-    @numba.njit("(f8[:],f8[:],f8[:],f8[:])",parallel=True)
+    @numba.njit("(f8[:],f8[:],f8[:],f8[:])")
     def modified_helmholtz_kernel_self_serial(sx, sy, charge, pot):
         ns = sx.shape[0]
         scale = -0.25/np.pi

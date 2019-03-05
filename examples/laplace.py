@@ -26,7 +26,7 @@ Laplace_Kernel_Form       = pykifmm2d.kernels.laplace.Laplace_Kernel_Form
 Laplace_Kernel_Eval       = pykifmm2d.kernels.laplace.laplace_eval
 Prepare_Functions         = pykifmm2d.fmm.prepare_numba_functions
 
-N_total = 1000000
+N_total = 1*1000*1000
 
 # construct some data to run FMM on
 N_clusters = 5

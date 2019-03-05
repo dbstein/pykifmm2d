@@ -148,6 +148,23 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
                                     jjs[start_vals[i]+track_val+ikj*n1+iki] = kj
                             track_val += n1*n2
 
+    @numba.njit("(f8[:],f8[:],i8[:],i8[:],f8[:],f8[:],f8[:],f8[:],i8[:],i8[:],f8[:],b1[:],i8)", parallel=True)
+    def build_upwards_pass(x, y, botind, topind, xmid, ymid, xring, yring, iis, jjs, data, doit, track_val):
+        n = botind.shape[0]
+        n1 = xring.shape[0]
+        for i in range(n):
+            if doit[i]:
+                bi = botind[i]
+                ti = topind[i]
+                n2 = ti - bi
+                for ki in range(n1):
+                    for ikj, kj in enumerate(range(bi, ti)):
+                        data[track_val+ki*n2+ikj] = Kernel_Eval(x[kj],y[kj],xring[ki]+xmid[i],yring[ki]+ymid[i])
+                        iis [track_val+ki*n2+ikj] = ki + i*n1
+                        jjs [track_val+ki*n2+ikj] = kj
+                track_val += n1*n2
+        return track_val
+
     @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])",parallel=True)
     def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
         n = botind.shape[0]
@@ -165,13 +182,14 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
                 bi = botind[i]
                 ti = topind[i]
                 Kernel_Apply(xsrc, ysrc, x[bi:ti], y[bi:ti], -xmid[i], -ymid[i], local_expansions[i], sol[bi:ti])
-    return evaluate_neighbor_interactions, build_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2
+    return evaluate_neighbor_interactions, build_neighbor_interactions, build_upwards_pass, numba_upwards_pass, numba_downwards_pass2
 
 def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose):
     my_print = get_print_function(verbose)
 
-    (evaluate_neighbor_interactions, build_neighbor_interactions, \
-         numba_upwards_pass, numba_downwards_pass2) = numba_functions
+    (evaluate_neighbor_interactions, build_neighbor_interactions,      \
+        build_upwards_pass, numba_upwards_pass, numba_downwards_pass2) \
+        = numba_functions
 
     # allocate workspace in tree
     if not tree.workspace_allocated:
@@ -392,8 +410,9 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
     my_print = get_print_function(verbose)
     my_print('\nPlanning FMM')
 
-    (evaluate_neighbor_interactions, build_neighbor_interactions, \
-         numba_upwards_pass, numba_downwards_pass2) = numba_functions
+    (evaluate_neighbor_interactions, build_neighbor_interactions,      \
+        build_upwards_pass, numba_upwards_pass, numba_downwards_pass2) \
+        = numba_functions
 
     # building a tree
     st = time.time()
@@ -551,20 +570,28 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
     st = time.time()
     upwards_mats = []
     for ind, Level in enumerate(tree.Levels):
-        iis = np.empty(10*Ncutoff**2, dtype=int)
-        jjs = np.empty(10*Ncutoff**2, dtype=int)
-        data = np.empty(10*Ncutoff**2, dtype=float)
+        iis =  np.empty(Level.n_node*Ncutoff*Nequiv, dtype=int)
+        jjs =  np.empty(Level.n_node*Ncutoff*Nequiv, dtype=int)
+        data = np.empty(Level.n_node*Ncutoff*Nequiv, dtype=float)
         track_val = 0
-        for i in range(Level.n_node):
-            if Level.compute_upwards[i] and Level.ns[i]>0:
-                bi = Level.bot_ind[i]
-                ti = Level.top_ind[i]
-                mat = Kernel_Form(tree.x[bi:ti], tree.y[bi:ti], large_xs[ind]+Level.xmid[i], large_ys[ind]+Level.ymid[i])
-                jj, ii = np.meshgrid(np.arange(bi, ti), np.arange(Nequiv)+i*Nequiv)
-                iis = set_matval(iis, ii.ravel(), track_val)
-                jjs = set_matval(jjs, jj.ravel(), track_val)
-                data = set_matval(data, mat.ravel(), track_val)
-                track_val += ii.ravel().shape[0]                
+        doit = np.logical_and(Level.compute_upwards, Level.ns>0)
+        track_val = build_upwards_pass(tree.x, tree.y, Level.bot_ind, Level.top_ind, \
+            Level.xmid, Level.ymid, large_xs[ind], large_ys[ind], iis, jjs, \
+            data, doit, track_val)
+        # iis = np.empty(10*Ncutoff**2, dtype=int)
+        # jjs = np.empty(10*Ncutoff**2, dtype=int)
+        # data = np.empty(10*Ncutoff**2, dtype=float)
+        # track_val = 0
+        # for i in range(Level.n_node):
+        #     if Level.compute_upwards[i] and Level.ns[i]>0:
+        #         bi = Level.bot_ind[i]
+        #         ti = Level.top_ind[i]
+        #         mat = Kernel_Form(tree.x[bi:ti], tree.y[bi:ti], large_xs[ind]+Level.xmid[i], large_ys[ind]+Level.ymid[i])
+        #         jj, ii = np.meshgrid(np.arange(bi, ti), np.arange(Nequiv)+i*Nequiv)
+        #         iis = set_matval(iis, ii.ravel(), track_val)
+        #         jjs = set_matval(jjs, jj.ravel(), track_val)
+        #         data = set_matval(data, mat.ravel(), track_val)
+        #         track_val += ii.ravel().shape[0]                
         iis = iis[:track_val]
         jjs = jjs[:track_val]
         data = data[:track_val]
@@ -577,25 +604,34 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
     st = time.time()
     downwards_mats = []
     for ind, Level in enumerate(tree.Levels):
-        iis = np.empty(10*Ncutoff**2, dtype=int)
-        jjs = np.empty(10*Ncutoff**2, dtype=int)
-        data = np.empty(10*Ncutoff**2, dtype=float)
+        iis =  np.empty(Level.n_node*Ncutoff*Nequiv, dtype=int)
+        jjs =  np.empty(Level.n_node*Ncutoff*Nequiv, dtype=int)
+        data = np.empty(Level.n_node*Ncutoff*Nequiv, dtype=float)
         track_val = 0
-        for i in range(Level.n_node):
-            if Level.leaf[i] and Level.ns[i]>0:
-                bi = Level.bot_ind[i]
-                ti = Level.top_ind[i]
-                mat = Kernel_Form(tree.x[bi:ti], tree.y[bi:ti], large_xs[ind]+Level.xmid[i], large_ys[ind]+Level.ymid[i])
-                jj, ii = np.meshgrid(np.arange(bi, ti), np.arange(Nequiv)+i*Nequiv)
-                iis = set_matval(iis, ii.ravel(), track_val)
-                jjs = set_matval(jjs, jj.ravel(), track_val)
-                data = set_matval(data, mat.ravel(), track_val)
-                track_val += ii.ravel().shape[0]                
+        doit = np.logical_and(Level.leaf, Level.ns>0)
+        track_val = build_upwards_pass(tree.x, tree.y, Level.bot_ind, Level.top_ind, \
+            Level.xmid, Level.ymid, large_xs[ind], large_ys[ind], iis, jjs, \
+            data, doit, track_val)
+        # iis = np.empty(10*Ncutoff**2, dtype=int)
+        # jjs = np.empty(10*Ncutoff**2, dtype=int)
+        # data = np.empty(10*Ncutoff**2, dtype=float)
+        # track_val = 0
+        # for i in range(Level.n_node):
+        #     if Level.leaf[i] and Level.ns[i]>0:
+        #         bi = Level.bot_ind[i]
+        #         ti = Level.top_ind[i]
+        #         mat = Kernel_Form(tree.x[bi:ti], tree.y[bi:ti], large_xs[ind]+Level.xmid[i], large_ys[ind]+Level.ymid[i])
+        #         jj, ii = np.meshgrid(np.arange(bi, ti), np.arange(Nequiv)+i*Nequiv)
+        #         iis = set_matval(iis, ii.ravel(), track_val)
+        #         jjs = set_matval(jjs, jj.ravel(), track_val)
+        #         data = set_matval(data, mat.ravel(), track_val)
+        #         track_val += ii.ravel().shape[0]      
         iis = iis[:track_val]
         jjs = jjs[:track_val]
         data = data[:track_val]
         level_matrix = sp.sparse.coo_matrix((data,(iis,jjs)),shape=[Nequiv*Level.n_node,tree.x.shape[0]])
         downwards_mats.append(level_matrix.T.tocsr())
+        # downwards_mats.append(upwards_mats[ind].T.tocsr())
     et = time.time()
     my_print('....Time to make downwards mats  {:0.2f}'.format(1000*(et-st)))
 
@@ -635,8 +671,9 @@ def planned_fmm(fmm_plan, tau):
     Nequiv = theta.shape[0]
 
     my_print = get_print_function(verbose)
-    (evaluate_neighbor_interactions, build_neighbor_interactions, \
-         numba_upwards_pass, numba_downwards_pass2) = numba_functions
+    (evaluate_neighbor_interactions, build_neighbor_interactions,      \
+        build_upwards_pass, numba_upwards_pass, numba_downwards_pass2) \
+        = numba_functions
 
     my_print('Executing FMM')
 
@@ -704,4 +741,5 @@ def planned_fmm(fmm_plan, tau):
     # deorder the solution
     desorter = np.argsort(tree.ordv)
     return solution_ordered[desorter]
+
 
