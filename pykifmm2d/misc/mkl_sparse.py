@@ -1,8 +1,13 @@
 import numpy as np
 import scipy.sparse as sparse
-from ctypes import POINTER,c_void_p,c_int,c_char,c_double,byref,cdll
+import ctypes
+from ctypes import pointer, POINTER, c_void_p, c_int, c_char, c_double
+from ctypes import byref, cdll
 try:
-    mkl = cdll.LoadLibrary("libmkl_rt.so")
+    try:
+      mkl = cdll.LoadLibrary("libmkl_rt.so")
+    except:
+      mkl = cdll.LoadLibrary("libmkl_rt.dylib")
     mkl_is_here = True
 except:
     mkl_is_here = False
@@ -17,12 +22,6 @@ if mkl_is_here:
         Stephen Becker, April 24 2014
         stephen.beckr@gmail.com
         """
-
-        import numpy as np
-        import scipy.sparse as sparse
-        from ctypes import POINTER,c_void_p,c_int,c_char,c_double,byref,cdll
-        mkl = cdll.LoadLibrary("libmkl_rt.so")
-
         SpMV = mkl.mkl_cspblas_dcsrgemv
         # Dissecting the "cspblas_dcsrgemv" name:
         # "c" - for "c-blas" like interface (as opposed to fortran)
@@ -79,6 +78,78 @@ if mkl_is_here:
                SpMV(byref(c_char(b"N")), byref(c_int(m)),data,indptr, indices, np_x, np_y ) 
 
         return y
+    def CSR_ADD( A, B ):
+        """
+        Wrapper to Intel's mkl_dcsradd
+        (Sparse Matrix Addition for CSR MATS)
+        """
+        # sort indices
+        if not A.has_sorted_indices:
+          A.sort_indices()
+        if not B.has_sorted_indices:
+          B.sort_indices
+
+        CSRA = mkl.mkl_dcsradd
+
+        shift = 1
+
+        # variables relating to a, b, beta
+        na = A.count_nonzero()
+        sha = A.shape
+        m = pointer(c_int(sha[0]))
+        n = pointer(c_int(sha[1]))
+        a = A.data.ctypes.data_as(POINTER(c_double))
+        _ja = (A.indices + shift).astype(np.int32)
+        ja = _ja.ctypes.data_as(POINTER(c_int))
+        _ia = (A.indptr + shift).astype(np.int32)
+        ia = _ia.ctypes.data_as(POINTER(c_int))
+
+        beta = byref(c_double(1.0))
+
+        b = B.data.ctypes.data_as(POINTER(c_double))
+        _jb = (B.indices + shift).astype(np.int32)
+        jb = _jb.ctypes.data_as(POINTER(c_int))
+        _ib = (B.indptr + shift).astype(np.int32)
+        ib = _ib.ctypes.data_as(POINTER(c_int))
+        nzmax = byref(c_int(0))
+
+        # dummy output variables for first call
+        c = np.empty(1, dtype=np.float64)
+        jc = np.empty(1, dtype=np.int32)
+        ic = np.empty(sha[0] + 1, dtype=np.int32)
+        pc = c.ctypes.data_as(POINTER(c_double))
+        pjc = jc.ctypes.data_as(POINTER(c_int))
+        pic = ic.ctypes.data_as(POINTER(c_int))
+
+        # setup variables for MKL call
+        trans = pointer(c_char(b"N"))
+        request = pointer(c_int(1))
+        sort = pointer(c_int(3))
+        info = pointer(c_int(0))
+
+        # call once to compute number of values in the ouput
+        CSRA(trans, request, sort, m, n, a, ja, ia, beta, b, jb, ib, \
+                  pc, pjc, pic, nzmax, info)
+
+        # allocate memory
+        nc = pic[m[0]] - 1
+        c = np.empty(nc, dtype=np.float64)
+        jc = np.empty(nc, dtype=np.int32)
+        pc = c.ctypes.data_as(POINTER(c_double))
+        pjc = jc.ctypes.data_as(POINTER(c_int))
+        request = pointer(c_int(2))
+        sort = pointer(c_int(0))
+        info = pointer(c_int(0))
+
+        # call once more to compute sum
+        CSRA(trans, request, sort, m, n, a, ja, ia, beta, b, jb, ib, \
+                  pc, pjc, pic, nzmax, info)
+
+        # construct matrix from the data
+        return sparse.csr_matrix((c, jc-shift, ic-shift), shape=sha)
+
 else:
     def SpMV_viaMKL( A, x ):
         return A.dot(x)
+    def CSR_ADD(A, B):
+        return A + B

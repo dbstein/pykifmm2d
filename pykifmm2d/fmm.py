@@ -372,22 +372,7 @@ def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M
                 if ci >= 0 and ci != i:
                     xdist = int(np.sign(xmid[ci]-xmid[i]))
                     ydist = int(np.sign(ymid[ci]-ymid[i]))
-                    # if abs(xmid[i] - xmid[ci]) < 1e-14:
-                        # xdist = 0
-                    # elif xmid[i] - xmid[ci] < 0:
-                        # xdist = 1
-                    # else:
-                        # xdist = -1
-                    # if abs(ymid[i] - ymid[ci]) < 1e-14:
-                        # ydist = 0
-                    # elif ymid[i] - ymid[ci] < 0:
-                        # ydist = 1
-                    # else:
-                        # ydist = -1
                     di = ci4[ci]
-                    # for k in range(4):
-                    #     Local_Solutions[4*dii+k] += \
-                    #         M2Ms[xdist+1,ydist+1,di,k*Nequiv:(k+1)*Nequiv]
                     for k in range(4):
                         for ll in range(Local_Solutions.shape[1]):
                             Local_Solutions[4*dii+k, ll] += \
@@ -530,44 +515,25 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
 
     # generate sparse matrix for neighbor interactions for each level
     st = time.time()
-    neighbor_mats = []
     memory = np.empty([4*Ncutoff,4*Ncutoff], dtype=float)
     base_ranges = np.arange(4*Ncutoff)
-    for Level in tree.Levels:
+    for iL, Level in enumerate(tree.Levels):
         n_data = numba_get_neighbor_length(Level.leaf, Level.ns, Level.colleagues)
         iis = np.zeros(n_data, dtype=int)
         jjs = np.zeros(n_data, dtype=int)
         data = np.zeros(n_data, dtype=float)
         build_neighbor_interactions(tree.x, tree.y, Level.leaf, Level.ns,
             Level.bot_ind, Level.top_ind, Level.colleagues, n_data, iis, jjs, data)
-        # track_val = 0
-        # for i in range(Level.n_node):
-        #     if Level.leaf[i] and Level.ns[i]>0:
-        #         bind1 = Level.bot_ind[i]
-        #         tind1 = Level.top_ind[i]
-        #         for j in range(9):
-        #             ci = Level.colleagues[i,j]
-        #             if ci >= 0:
-        #                 bind2 = Level.bot_ind[ci]
-        #                 tind2 = Level.top_ind[ci]
-        #                 if ci == i:
-        #                     mat = memory[:Level.ns[i],:Level.ns[i]]
-        #                     mat = Kernel_Form(tree.x[bind1:tind1], tree.y[bind1:tind1], out=mat)
-        #                 else:
-        #                     mat = memory[:Level.ns[i],:Level.ns[ci]]
-        #                     mat = Kernel_Form(tree.x[bind2:tind2], tree.y[bind2:tind2], tree.x[bind1:tind1], tree.y[bind1:tind1], out=mat)
-        #                 indj = bind2 + base_ranges[:Level.ns[ci]]
-        #                 indi = bind1 + base_ranges[:Level.ns[i]]
-        #                 nn = Level.ns[i]*Level.ns[ci]
-        #                 iis[track_val:track_val+nn] = np.repeat(indi, indj.shape[0])
-        #                 jjs[track_val:track_val+nn] = np.tile(indj, indi.shape[0])
-        #                 data[track_val:track_val+nn] = mat.ravel()
-        #                 track_val += nn
         level_matrix = sp.sparse.coo_matrix((data,(iis,jjs)),shape=[tree.x.shape[0],tree.x.shape[0]])
-        neighbor_mats.append(level_matrix.tocsr())
-    neighbor_mat = neighbor_mats[0]
-    for ind in range(1,tree.levels):
-        neighbor_mat += neighbor_mats[ind]
+        if iL == 0:
+            neighbor_mat = level_matrix.tocsr()
+        else:
+            neighbor_mat += level_matrix.tocsr()
+    neighbor_mat = neighbor_mat.tocsr()
+        # neighbor_mats.append(level_matrix.tocsr())
+    # neighbor_mat = neighbor_mats[0]
+    # for ind in range(1,tree.levels):
+        # neighbor_mat += neighbor_mats[ind]
     et = time.time()
     my_print('....Time to make neighbor mats   {:0.2f}'.format(1000*(et-st)))
 
@@ -582,21 +548,7 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
         doit = np.logical_and(Level.compute_upwards, Level.ns>0)
         track_val = build_upwards_pass(tree.x, tree.y, Level.bot_ind, Level.top_ind, \
             Level.xmid, Level.ymid, large_xs[ind], large_ys[ind], iis, jjs, \
-            data, doit, track_val)
-        # iis = np.empty(10*Ncutoff**2, dtype=int)
-        # jjs = np.empty(10*Ncutoff**2, dtype=int)
-        # data = np.empty(10*Ncutoff**2, dtype=float)
-        # track_val = 0
-        # for i in range(Level.n_node):
-        #     if Level.compute_upwards[i] and Level.ns[i]>0:
-        #         bi = Level.bot_ind[i]
-        #         ti = Level.top_ind[i]
-        #         mat = Kernel_Form(tree.x[bi:ti], tree.y[bi:ti], large_xs[ind]+Level.xmid[i], large_ys[ind]+Level.ymid[i])
-        #         jj, ii = np.meshgrid(np.arange(bi, ti), np.arange(Nequiv)+i*Nequiv)
-        #         iis = set_matval(iis, ii.ravel(), track_val)
-        #         jjs = set_matval(jjs, jj.ravel(), track_val)
-        #         data = set_matval(data, mat.ravel(), track_val)
-        #         track_val += ii.ravel().shape[0]                
+            data, doit, track_val)              
         iis = iis[:track_val]
         jjs = jjs[:track_val]
         data = data[:track_val]
@@ -616,21 +568,7 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
         doit = np.logical_and(Level.leaf, Level.ns>0)
         track_val = build_upwards_pass(tree.x, tree.y, Level.bot_ind, Level.top_ind, \
             Level.xmid, Level.ymid, large_xs[ind], large_ys[ind], iis, jjs, \
-            data, doit, track_val)
-        # iis = np.empty(10*Ncutoff**2, dtype=int)
-        # jjs = np.empty(10*Ncutoff**2, dtype=int)
-        # data = np.empty(10*Ncutoff**2, dtype=float)
-        # track_val = 0
-        # for i in range(Level.n_node):
-        #     if Level.leaf[i] and Level.ns[i]>0:
-        #         bi = Level.bot_ind[i]
-        #         ti = Level.top_ind[i]
-        #         mat = Kernel_Form(tree.x[bi:ti], tree.y[bi:ti], large_xs[ind]+Level.xmid[i], large_ys[ind]+Level.ymid[i])
-        #         jj, ii = np.meshgrid(np.arange(bi, ti), np.arange(Nequiv)+i*Nequiv)
-        #         iis = set_matval(iis, ii.ravel(), track_val)
-        #         jjs = set_matval(jjs, jj.ravel(), track_val)
-        #         data = set_matval(data, mat.ravel(), track_val)
-        #         track_val += ii.ravel().shape[0]      
+            data, doit, track_val)    
         iis = iis[:track_val]
         jjs = jjs[:track_val]
         data = data[:track_val]
