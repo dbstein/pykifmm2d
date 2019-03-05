@@ -526,9 +526,9 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
             Level.bot_ind, Level.top_ind, Level.colleagues, n_data, iis, jjs, data)
         level_matrix = sp.sparse.coo_matrix((data,(iis,jjs)),shape=[tree.x.shape[0],tree.x.shape[0]])
         if iL == 0:
-            neighbor_mat = level_matrix.tocsr()
+            neighbor_mat = level_matrix
         else:
-            neighbor_mat += level_matrix.tocsr()
+            neighbor_mat += level_matrix
     neighbor_mat = neighbor_mat.tocsr()
         # neighbor_mats.append(level_matrix.tocsr())
     # neighbor_mat = neighbor_mats[0]
