@@ -517,6 +517,9 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
     st = time.time()
     memory = np.empty([4*Ncutoff,4*Ncutoff], dtype=float)
     base_ranges = np.arange(4*Ncutoff)
+    iis_big = np.array([])
+    jjs_big = np.array([])
+    data_big = np.array([])
     for iL, Level in enumerate(tree.Levels):
         n_data = numba_get_neighbor_length(Level.leaf, Level.ns, Level.colleagues)
         iis = np.zeros(n_data, dtype=int)
@@ -524,11 +527,15 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
         data = np.zeros(n_data, dtype=float)
         build_neighbor_interactions(tree.x, tree.y, Level.leaf, Level.ns,
             Level.bot_ind, Level.top_ind, Level.colleagues, n_data, iis, jjs, data)
-        level_matrix = sp.sparse.coo_matrix((data,(iis,jjs)),shape=[tree.x.shape[0],tree.x.shape[0]])
-        if iL == 0:
-            neighbor_mat = level_matrix
-        else:
-            neighbor_mat += level_matrix
+        iis_big = np.concatenate([iis_big, iis])
+        jjs_big = np.concatenate([jjs_big, jjs])
+        data_big = np.concatenate([data_big, data])
+        # level_matrix = sp.sparse.coo_matrix((data,(iis,jjs)),shape=[tree.x.shape[0],tree.x.shape[0]])
+        # if iL == 0:
+            # neighbor_mat = level_matrix
+        # else:
+            # neighbor_mat += level_matrix
+    neighbor_mat = sp.sparse.coo_matrix((data_big,(iis_big,jjs_big)),shape=[tree.x.shape[0],tree.x.shape[0]])
     neighbor_mat = neighbor_mat.tocsr()
         # neighbor_mats.append(level_matrix.tocsr())
     # neighbor_mat = neighbor_mats[0]
