@@ -89,7 +89,7 @@ def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, Kernel_Form, numba_functions, ver
 
 def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
     @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True)
-    def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
+    def evaluate_neighbor_interactions_old(x, y, leaf, botind, topind, tau, colleagues, sol):
         n = botind.shape[0]
         for i in numba.prange(n):
             if leaf[i]:
@@ -104,6 +104,24 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
                             Kernel_Self_Apply(x[bind1:tind1], y[bind1:tind1], tau[bind1:tind1], sol[bind1:tind1])
                         else:
                             Kernel_Apply(x[bind2:tind2], y[bind2:tind2], x[bind1:tind1], y[bind1:tind1], 0.0, 0.0, tau[bind2:tind2], sol[bind1:tind1])
+
+def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
+    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True)
+    def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
+        n = botind.shape[0]
+        for i in numba.prange(n):
+            if leaf[i]:
+                bind1 = botind[i]
+                tind1 = topind[i]
+                for j in range(9):
+                    ci = colleagues[i,j]
+                    if ci >= 0:
+                        bind2 = botind[ci]
+                        tind2 = topind[ci]
+                        for ks in range(bind2, tind2):
+                            for kt in range(bind1, tind1):
+                                if ks != kt:
+                                    sol[kt] += tau[ks]*Kernel_Eval(x[ks], y[ks], x[kt], y[kt])
 
     @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],i8[:],i8[:,:],i8,i8[:],i8[:],f8[:])", parallel=True)
     def build_neighbor_interactions(x, y, leaf, ns, botind, topind, colleagues, n_data, iis, jjs, data):
@@ -530,17 +548,10 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
         iis_big = np.concatenate([iis_big, iis])
         jjs_big = np.concatenate([jjs_big, jjs])
         data_big = np.concatenate([data_big, data])
-        # level_matrix = sp.sparse.coo_matrix((data,(iis,jjs)),shape=[tree.x.shape[0],tree.x.shape[0]])
-        # if iL == 0:
-            # neighbor_mat = level_matrix
-        # else:
-            # neighbor_mat += level_matrix
+    ## THIS CONSTRUCTION IS WHAT IS SLOW HERE!
     neighbor_mat = sp.sparse.coo_matrix((data_big,(iis_big,jjs_big)),shape=[tree.x.shape[0],tree.x.shape[0]])
     neighbor_mat = neighbor_mat.tocsr()
-        # neighbor_mats.append(level_matrix.tocsr())
-    # neighbor_mat = neighbor_mats[0]
-    # for ind in range(1,tree.levels):
-        # neighbor_mat += neighbor_mats[ind]
+    del iis_big, jjs_big, data_big
     et = time.time()
     my_print('....Time to make neighbor mats   {:0.2f}'.format(1000*(et-st)))
 

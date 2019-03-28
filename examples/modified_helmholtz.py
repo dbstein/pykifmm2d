@@ -28,7 +28,7 @@ MH_get = pykifmm2d.kernels.modified_helmholtz.generate_modified_helmholtz_functi
 Prepare_Functions = pykifmm2d.fmm.prepare_numba_functions
 
 N_total = 100*1000
-helmholtz_k = 0.01
+helmholtz_k = 1.0
 
 # construct some data to run FMM on
 N_clusters = 50

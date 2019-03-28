@@ -10,9 +10,9 @@ random2 = pykifmm2d.utils.random2
 plotit = True
 
 # construct some data to tree
-N_total = 100000
+N_total = 1000
 N_random = int(0.5*N_total)
-N_clusters = 100
+N_clusters = 10
 N_per_cluster = int(round((N_total - N_random)/N_clusters))
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
@@ -23,7 +23,7 @@ px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
 py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 
 # maximum number of points in each leaf of tree
-N_cutoff = 200
+N_cutoff = 20
 
 class empty(object):
 	def __init__(self):
