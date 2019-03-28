@@ -1,0 +1,110 @@
+\documentclass{article}
+
+\usepackage[a4paper,top=3cm,bottom=2cm,left=3cm,right=3cm,marginparwidth=1.75cm]{geometry}
+\usepackage{etoolbox}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{subcaption}
+\usepackage{tikz}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+\usepackage{mathtools}
+\usepackage{MnSymbol}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{cleveref}
+
+\newcommand\mycommfont[1]{\footnotesize\ttfamily\textcolor{blue}{#1}}
+\SetCommentSty{mycommfont}
+
+\makeatletter
+\newcommand*{\declarecommand}{%
+  \@star@or@long\declare@command
+}
+\newcommand*{\declare@command}[1]{%
+  \provide@command{#1}{}%
+  \renew@command{#1}%
+}
+\makeatother
+
+\declarecommand{\nc}{n_\textnormal{cutoff}}
+\declarecommand{\inp}{_\textnormal{input}}
+\declarecommand{\smin}{_\textnormal{min}}
+\declarecommand{\smax}{_\textnormal{max}}
+\declarecommand{\arange}{\textnormal{arange}}
+\declarecommand{\pluseq}{\mathrel{{+}{=}}}
+
+
+\title{pykifmm2d: A 2D Kernel Independent FMM, implemented in python and numba}
+
+\begin{document}
+
+\maketitle
+
+\section{What does this package do?}
+
+\subsection{What does this do now?}
+
+This package aims to implement a reasonably efficient, parallel (on a single node), Kernel Independent FMM, with minimal dependencies and a simple to use interface.
+
+The package currently supports:
+\begin{enumerate}
+	\item Source to source point FMM
+	\item Planned source to source point FMM
+\end{enumerate}
+
+I have included an option to `plan' an FMM. This can be useful if an FMM has to be called over and over again on the same geometry, as occurs when solving time-stepping problems on fixed domains, or when using GMRES to invert a BIE. The `planned' FMM can use a lot of RAM, so it should be used with some amount of care. While it won't make a huge difference for cheap kernels (e.g. Laplace), it can make a significant performance difference for expensive kernels (e.g. Modified Helmholtz).
+
+\subsection{What will it do, eventually?}
+
+The goal, hopefully, is to support the following:
+\begin{itemize}
+	\item Source to target, source to source+target point FMM
+	\item Volume to volume FMMs
+	\item Potentially source+volume to source+volume FMMs
+\end{itemize}
+
+\section{Tree Algorithm (point FMM)}
+
+The tree algorithm is slightly different than for other FMM codes. In particular, the level restriction is different: in the standard FMM algorithm, level restriction is performed for a leaf if a neighbor node is two or more levels finer than that leaf. In this tree, level restriction is performed if you are a leaf and any of your colleagues have grandchildren. This results in a tree that may be 1 level more refined than the standard tree, but allows for some algorithmic simplifications (as I will explain later in the FMM algorithm - in effect, the downwards pass looks basically the same for every single box in the tree). A high level overview is given in \Cref{algo:tree}; more detailed algorithms for the substeps required will be presented in [].
+
+\begin{algorithm}[h!]
+\DontPrintSemicolon
+\KwIn{$x\inp$ and $y\inp$, float arrays of lengh $n$, and $\nc$, the cutoff size for leaves}
+\KwOut{Level-restricted quadtree}
+copy $x,\ y \gets x\inp,\ y\inp$\;
+$x\smin,\ x\smax,\ y\smin,\ y\smax \gets \min x,\ \max x,\ \min y,\ \max y$\;
+$ordv$ $\gets \arange(n)$\;
+\tcc{this vector will keep track of how we reorder the point vectors $x$ and $y$}
+create initial Level with single box $[x\smin,\ x\smax]\times[y\smin,\ y\smax]$\;
+\tcc{for future: allow initial level to be multiple boxes to better support anisotropic domains (more important for volume FMM!)}
+\While{$\max_{\textnormal{node in currLevel}}$$\{$\#node$\}$ $> \nc$} {
+	currLevel $\gets$ newLevel from currLevel\;
+	\tcc{this reorders $x$, $y$, and $ordv$!}
+}
+maxDepth $\gets$ number of levels\;
+\For{level in Levels}{
+	Tag Colleagues for all nodes in level\;
+	Compute depth of all leaves\;
+}
+Level Restriction\;
+\tcc{this reorders $x$, $y$, and $ordv$!}
+Tag $X$-list nodes and split into fake nodes\;
+\tcc{this reorders $x$, $y$, and $ordv$!}
+Mark nodes as leaf or not\;
+\caption{Construct level-restricted quadtree}
+\label{algo:tree}
+\end{algorithm}
+
+I will go into some more detail about each of these steps.
+
+\section{FMM Algorithm}
+
+The FMM algorithm is somewhat different from other FMM codes- in particular, I have made a variety of choices to simplify the algorithm, eliminating some of the ``lists'' that cause complexity in other implementations. I will explain this later, but the primary difference is in the usage of ``fake'' leaves: refined leaf nodes on which we form multipole expansions in the upward pass, but do not form local expansions in the downward pass. This simplifies the algorithm at the cost of some extra flops, but the simplifications allow for more optimized code (or perhaps I should say, the simplified code is easier to optimize for someone like me who is not really very good at writing code). In particular, this change eliminates the so-called \emph{X-list}.
+
+Another simplifcation that I have made is that I don't attempt to compress the multipole to local translations. Again, this will certainly require some extra flops, but it also allows for simpler code that is easier to optimize for someone who doesn't code so well (like me). I may return to this at some point.
+
+
+
+\section{Comparisons to other FMM codes}
+
+\end{document}
