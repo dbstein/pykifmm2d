@@ -26,7 +26,7 @@ Laplace_Kernel_Form       = pykifmm2d.kernels.laplace.Laplace_Kernel_Form
 Laplace_Kernel_Eval       = pykifmm2d.kernels.laplace.laplace_eval
 Prepare_Functions         = pykifmm2d.fmm.prepare_numba_functions
 
-N_total = 1000*1000*1
+N_total = 1000*1000
 
 # construct some data to run FMM on
 N_clusters = 50
@@ -40,7 +40,7 @@ px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
 py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 50
+N_cutoff = 30
 # number of points used in Check/Equivalent Surfaces
 N_equiv = 48
 

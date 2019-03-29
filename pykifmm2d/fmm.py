@@ -105,7 +105,6 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
                         else:
                             Kernel_Apply(x[bind2:tind2], y[bind2:tind2], x[bind1:tind1], y[bind1:tind1], 0.0, 0.0, tau[bind2:tind2], sol[bind1:tind1])
 
-def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
     @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True)
     def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
         n = botind.shape[0]
@@ -189,7 +188,7 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
         return track_val
 
     @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])",parallel=True)
-    def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
+    def numba_upwards_pass_old(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
         n = botind.shape[0]
         for i in numba.prange(n):
             if compute_upwards[i] and (ns[i] > 0):
@@ -198,13 +197,37 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
                 Kernel_Apply(x[bi:ti], y[bi:ti], xtarg, ytarg, xmid[i], ymid[i], tau[bi:ti], ucheck[i])
 
     @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:,:],f8[:])",parallel=True)
-    def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
+    def numba_downwards_pass2_old(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
         n = botind.shape[0]
         for i in numba.prange(n):
             if leaf[i] and (ns[i] > 0):
                 bi = botind[i]
                 ti = topind[i]
                 Kernel_Apply(xsrc, ysrc, x[bi:ti], y[bi:ti], -xmid[i], -ymid[i], local_expansions[i], sol[bi:ti])
+
+    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])",parallel=True)
+    def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
+        n = botind.shape[0]
+        ne = xtarg.shape[0]
+        for i in numba.prange(n):
+            if compute_upwards[i] and (ns[i] > 0):
+                bi = botind[i]
+                ti = topind[i]
+                for ks in range(bi, ti):
+                    for kt in range(ne):
+                        ucheck[i,kt] += Kernel_Eval(x[ks], y[ks], xtarg[kt]+xmid[i], ytarg[kt]+ymid[i])*tau[ks]
+
+    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:,:],f8[:])",parallel=True)
+    def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
+        n = botind.shape[0]
+        ne = xsrc.shape[0]
+        for i in numba.prange(n):
+            if leaf[i] and (ns[i] > 0):
+                bi = botind[i]
+                ti = topind[i]
+                for ks in range(ne):
+                    for kt in range(bi, ti):
+                        sol[kt] += Kernel_Eval(xsrc[ks], ysrc[ks], x[kt]-xmid[i], y[kt]-ymid[i])*local_expansions[i,ks]
     return evaluate_neighbor_interactions, build_neighbor_interactions, build_upwards_pass, numba_upwards_pass, numba_downwards_pass2
 
 def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose):
@@ -379,7 +402,7 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose):
     desorter = np.argsort(tree.ordv)
     return solution_ordered[desorter]
 
-@numba.njit("(b1[:],i8[:],i8[:,:],f8[:],f8[:],f8[:,:],f8[:,:,:,:],i8)",parallel=True)
+@numba.njit("(b1[:],i8[:],i8[:,:],f8[:],f8[:],f8[:,:],f8[:,:,:,:],i8)", parallel=True, cache=True)
 def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M2Ms, Nequiv):
     n = doit.shape[0]
     for i in numba.prange(n):
@@ -599,7 +622,7 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
     fmm_plan = FMM_Plan(tree, theta, large_xs, large_ys, E2C_LUs, M2MC, M2LS, CM2LS, neighbor_mat, upwards_mats, downwards_mats, numba_functions, verbose)
     return fmm_plan
 
-@numba.njit("i8(b1[:],i8[:],i8[:,:])",parallel=False)
+@numba.njit("i8(b1[:],i8[:],i8[:,:])", parallel=False, cache=True)
 def numba_get_neighbor_length(leaf, ns, colleagues):
     n = 0
     for i in range(leaf.shape[0]):
@@ -621,7 +644,7 @@ def set_matval(xx, xn, ti):
         xx = xxn
     return xx
 
-@numba.njit("(f8[:,:],f8[:,:],i8[:],i8)",parallel=True)
+@numba.njit("(f8[:,:],f8[:,:],i8[:],i8)", parallel=True, cache=True)
 def numba_distribute(ucs, temp, pi, n):
     for i in numba.prange(n):
         ucs[pi[i]] = temp[i]
