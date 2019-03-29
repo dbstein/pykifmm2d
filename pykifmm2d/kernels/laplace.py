@@ -2,7 +2,7 @@ import numpy as np
 import numexpr as ne
 import numba
 
-@numba.njit("f8(f8,f8,f8,f8)")
+@numba.njit("f8(f8,f8,f8,f8)", fastmath=True)
 def laplace_eval(sx, sy, tx, ty):
     return -0.25*np.log((tx-sx)**2 + (ty-sy)**2)/np.pi
 

@@ -105,7 +105,7 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
                         else:
                             Kernel_Apply(x[bind2:tind2], y[bind2:tind2], x[bind1:tind1], y[bind1:tind1], 0.0, 0.0, tau[bind2:tind2], sol[bind1:tind1])
 
-    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True)
+    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True, fastmath=True)
     def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
         n = botind.shape[0]
         for i in numba.prange(n):
@@ -122,7 +122,7 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
                                 if ks != kt:
                                     sol[kt] += tau[ks]*Kernel_Eval(x[ks], y[ks], x[kt], y[kt])
 
-    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],i8[:],i8[:,:],i8,i8[:],i8[:],f8[:])", parallel=True)
+    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],i8[:],i8[:,:],i8,i8[:],i8[:],f8[:])", parallel=True, fastmath=True)
     def build_neighbor_interactions(x, y, leaf, ns, botind, topind, colleagues, n_data, iis, jjs, data):
         n = botind.shape[0]
         leaf_vals = np.zeros(n, dtype=np.int64)
@@ -165,7 +165,7 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
                                     jjs[start_vals[i]+track_val+ikj*n1+iki] = kj
                             track_val += n1*n2
 
-    @numba.njit("(f8[:],f8[:],i8[:],i8[:],f8[:],f8[:],f8[:],f8[:],i8[:],i8[:],f8[:],b1[:],i8)", parallel=True)
+    @numba.njit("(f8[:],f8[:],i8[:],i8[:],f8[:],f8[:],f8[:],f8[:],i8[:],i8[:],f8[:],b1[:],i8)", parallel=True, fastmath=True)
     def build_upwards_pass(x, y, botind, topind, xmid, ymid, xring, yring, iis, jjs, data, doit, track_val):
         n = botind.shape[0]
         n1 = xring.shape[0]
@@ -205,7 +205,7 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
                 ti = topind[i]
                 Kernel_Apply(xsrc, ysrc, x[bi:ti], y[bi:ti], -xmid[i], -ymid[i], local_expansions[i], sol[bi:ti])
 
-    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])",parallel=True)
+    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])", parallel=True, fastmath=True)
     def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
         n = botind.shape[0]
         ne = xtarg.shape[0]
@@ -217,7 +217,7 @@ def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
                     for kt in range(ne):
                         ucheck[i,kt] += Kernel_Eval(x[ks], y[ks], xtarg[kt]+xmid[i], ytarg[kt]+ymid[i])*tau[ks]
 
-    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:,:],f8[:])",parallel=True)
+    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:,:],f8[:])", parallel=True, fastmath=True)
     def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
         n = botind.shape[0]
         ne = xsrc.shape[0]

@@ -40,7 +40,7 @@ px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
 py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 30
+N_cutoff = 50
 # number of points used in Check/Equivalent Surfaces
 N_equiv = 48
 

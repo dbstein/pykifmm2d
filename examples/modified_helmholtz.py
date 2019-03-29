@@ -27,7 +27,7 @@ random2 = pykifmm2d.utils.random2
 MH_get = pykifmm2d.kernels.modified_helmholtz.generate_modified_helmholtz_functions
 Prepare_Functions = pykifmm2d.fmm.prepare_numba_functions
 
-N_total = 1000*1000*10
+N_total = 1000*1000
 helmholtz_k = 1.0
 
 # construct some data to run FMM on
@@ -44,7 +44,7 @@ py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
 # maximum number of points in each leaf of tree for FMM
 N_cutoff = 30
 # number of points used in Check/Equivalent Surfaces
-N_equiv = 32
+N_equiv = 48
 
 # get random density
 tau = np.random.rand(N_total)/N_total
