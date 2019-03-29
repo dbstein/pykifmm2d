@@ -35,7 +35,7 @@ kernel_functions = Prepare_K_Functions(Laplace_Kernel_Eval)
 # jit compile internal numba functions
 numba_functions = Prepare_Functions_OTF(Laplace_Kernel_Eval)
 
-N_total = 1000*1000*10
+N_total = 1000*1000*1
 
 # construct some data to run FMM on
 N_clusters = 50
