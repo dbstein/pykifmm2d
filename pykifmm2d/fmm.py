@@ -24,7 +24,166 @@ def fake_print(*args, **kwargs):
 def get_print_function(verbose):
     return print if verbose else fake_print
 
-def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=False):
+def prepare_numba_functions_on_the_fly(Kernel_Eval):
+    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True, fastmath=True)
+    def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
+        n = botind.shape[0]
+        for i in numba.prange(n):
+            if leaf[i]:
+                bind1 = botind[i]
+                tind1 = topind[i]
+                nt = tind1 - bind1
+                if nt > 0:
+                    tx = np.empty(nt)
+                    ty = np.empty(nt)
+                    soli = np.zeros(nt)
+                    for ll in range(nt):
+                        tx[ll] = x[bind1 + ll]
+                        ty[ll] = y[bind1 + ll]
+                    for j in range(9):
+                        ci = colleagues[i,j]
+                        if ci >= 0:
+                            bind2 = botind[ci]
+                            tind2 = topind[ci]
+                            ns = tind2 - bind2
+                            if ns > 0:
+                                sx = np.empty(ns)
+                                sy = np.empty(ns)
+                                taui = np.empty(ns)
+                                for ll in range(ns):
+                                    sx[ll] = x[bind2 + ll]
+                                    sy[ll] = y[bind2 + ll]
+                                    taui[ll] = tau[bind2 + ll]
+                                for ks in range(ns):
+                                    for kt in range(nt):
+                                        if i != ci or ks != kt:
+                                            soli[kt] += taui[ks]*Kernel_Eval(sx[ks], sy[ks], tx[kt], ty[kt])
+                    for kt in range(nt):
+                        sol[kt + bind1] += soli[kt]
+
+    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])", parallel=True, fastmath=True)
+    def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
+        n = botind.shape[0]
+        ne = xtarg.shape[0]
+        for i in numba.prange(n):
+            if compute_upwards[i] and (ns[i] > 0):
+                bi = botind[i]
+                ti = topind[i]
+                ni = ti-bi
+                sx = np.empty(ni)
+                sy = np.empty(ni)
+                taus = np.empty(ni)
+                uch = np.zeros(ne)
+                for ll in range(ni):
+                    sx[ll] = x[bi+ll]
+                    sy[ll] = y[bi+ll]
+                    taus[ll] = tau[bi+ll]
+                tx = xtarg + xmid[i]
+                ty = ytarg + ymid[i]
+                for ks in range(ni):
+                    for kt in range(ne):
+                        uch[kt] += Kernel_Eval(sx[ks], sy[ks], tx[kt], ty[kt])*taus[ks]
+                for kt in range(ne):
+                    ucheck[i,kt] += uch[kt]
+
+    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:,:],f8[:])", parallel=True, fastmath=True)
+    def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
+        n = botind.shape[0]
+        ne = xsrc.shape[0]
+        sx = np.empty(ne)
+        sy = np.empty(ne)
+        for ll in range(ne):
+            sx[ll] = xsrc[ll]
+            sy[ll] = ysrc[ll]
+        for i in numba.prange(n):
+            if leaf[i] and (ns[i] > 0):
+                bi = botind[i]
+                ti = topind[i]
+                ni = ti-bi
+                tx = x[bi:ti] - xmid[i]
+                ty = y[bi:ti] - ymid[i]
+                loci = np.empty(ne)
+                for ll in range(ne):
+                    loci[ll] = local_expansions[i, ll]
+                soli = np.zeros(ni)
+                for ks in range(ne):
+                    for kt in range(ni):
+                        soli[kt] += Kernel_Eval(sx[ks], sy[ks], tx[kt], ty[kt])*loci[ks]
+                for kt in range(ni):
+                    sol[kt+bi] += soli[kt]
+
+    return evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2
+
+def Get_Kernel_Functions(Kernel_Eval):
+    @numba.njit("(f8[:],f8[:],f8[:],f8[:],f8[:,:])", parallel=True, fastmath=True)
+    def KF(sx, sy, tx, ty, out):
+        ns = sx.shape[0]
+        nt = tx.shape[0]
+        for i in numba.prange(ns):
+            for j in range(nt):
+                out[j,i] = Kernel_Eval(sx[i], sy[i], tx[j], ty[j])
+
+    @numba.njit("(f8[:],f8[:],f8[:],f8[:],f8[:],f8[:])", parallel=True, fastmath=True)
+    def KA(sx, sy, tx, ty, tau, out):
+        ns = sx.shape[0]
+        nt = tx.shape[0]
+        for j in numba.prange(nt):
+            ja = 0.0
+            for i in range(ns):
+                ja += Kernel_Eval(sx[i], sy[i], tx[j], ty[j])*tau[i]
+            out[j] = ja
+
+    @numba.njit("(f8[:],f8[:],f8[:],f8[:])", parallel=True, fastmath=False)                
+    def KAS(sx, sy, tau, out):
+        ns = sx.shape[0]
+        nt = sx.shape[0]
+        for j in numba.prange(ns):
+            ja = 0.0
+            for i in range(ns):
+                if i != j:
+                    ja += Kernel_Eval(sx[i], sy[i], sx[j], sy[j])*tau[i]
+            out[j] = ja
+
+    return KF, KA, KAS
+def Kernel_Form(KF, sx, sy, tx=None, ty=None, out=None):
+    if tx is None or ty is None:
+        tx = sx
+        ty = sy
+        isself = True
+    else:
+        if sx is tx and sy is ty:
+            isself = True
+        else:
+            isself = False
+    ns = sx.shape[0]
+    nt = tx.shape[0]
+    if out is None:
+        out = np.empty((nt, ns))
+    KF(sx, sy, tx, ty, out)
+    if isself:
+        np.fill_diagonal(out, 0.0)
+    return out
+def Kernel_Apply(KA, KAS, sx, sy, tau, tx=None, ty=None, out=None):
+    if tx is None or ty is None:
+        tx = sx
+        ty = sy
+        isself = True
+    else:
+        if sx is tx and sy is ty:
+            isself = True
+        else:
+            isself = False
+    ns = sx.shape[0]
+    nt = tx.shape[0]
+    if out is None:
+        out = np.empty(nt)
+    if isself:
+        KAS(sx, sy, tau, out)
+    else:
+        KA(sx, sy, tx, ty, tau, out)
+    return out
+
+def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, kernel_functions, numba_functions, verbose=False):
     """
     On-the-fly KIFMM
         computes sum_{i!=j} G(x_i,x_j) * tau_j
@@ -77,165 +236,24 @@ def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, Kernel_Form, numba_functions, ver
     tree_formation_time = (time.time() - st)*1000
     my_print('....Tree formed in:            {:0.1f}'.format(tree_formation_time))
 
+    KF, KA, KAS = kernel_functions
     if tree.levels <= 2:
         # just do a direct evaluation in this case
-        solution = np.zeros(tau.shape[0], dtype=float)
-        Kernel_Apply(x, y, tau, solution)
+        solution = np.zeros_like(x)
+        KAS(x, y, tau, solution)
+        # solution = Kernel_Apply(KA, KAS, x, y, tau)
     else:
-        solution = _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose)
+        solution = _on_the_fly_fmm(tree, tau, Nequiv, kernel_functions, numba_functions, verbose)
     fmm_time = (time.time()-st)*1000
     my_print('FMM completed in               {:0.1f}'.format(fmm_time))
     return solution, tree
 
-def prepare_numba_functions(Kernel_Apply, Kernel_Self_Apply, Kernel_Eval):
-    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True)
-    def evaluate_neighbor_interactions_old(x, y, leaf, botind, topind, tau, colleagues, sol):
-        n = botind.shape[0]
-        for i in numba.prange(n):
-            if leaf[i]:
-                bind1 = botind[i]
-                tind1 = topind[i]
-                for j in range(9):
-                    ci = colleagues[i,j]
-                    if ci >= 0:
-                        bind2 = botind[ci]
-                        tind2 = topind[ci]
-                        if ci == i:
-                            Kernel_Self_Apply(x[bind1:tind1], y[bind1:tind1], tau[bind1:tind1], sol[bind1:tind1])
-                        else:
-                            Kernel_Apply(x[bind2:tind2], y[bind2:tind2], x[bind1:tind1], y[bind1:tind1], 0.0, 0.0, tau[bind2:tind2], sol[bind1:tind1])
-
-    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],f8[:],i8[:,:],f8[:])", parallel=True, fastmath=True)
-    def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
-        n = botind.shape[0]
-        for i in numba.prange(n):
-            if leaf[i]:
-                bind1 = botind[i]
-                tind1 = topind[i]
-                for j in range(9):
-                    ci = colleagues[i,j]
-                    if ci >= 0:
-                        bind2 = botind[ci]
-                        tind2 = topind[ci]
-                        for ks in range(bind2, tind2):
-                            for kt in range(bind1, tind1):
-                                if ks != kt:
-                                    sol[kt] += tau[ks]*Kernel_Eval(x[ks], y[ks], x[kt], y[kt])
-
-    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],i8[:],i8[:,:],i8,i8[:],i8[:],f8[:])", parallel=True, fastmath=True)
-    def build_neighbor_interactions(x, y, leaf, ns, botind, topind, colleagues, n_data, iis, jjs, data):
-        n = botind.shape[0]
-        leaf_vals = np.zeros(n, dtype=np.int64)
-        for i in range(n):
-            track_val = 0
-            if leaf[i]:
-                for j in range(9):
-                    ci = colleagues[i,j]
-                    if ci >= 0:
-                        leaf_vals[i] += ns[i]*ns[ci]
-        start_vals = np.empty(n, dtype=np.int64)
-        start_vals[0] = 0
-        for i in range(1,n):
-            start_vals[i] = start_vals[i-1] + leaf_vals[i-1]
-        for i in numba.prange(n):
-            track_val = 0
-            if leaf[i]:
-                bind1 = botind[i]
-                tind1 = topind[i]
-                n1 = tind1 - bind1
-                for j in range(9):
-                    ci = colleagues[i,j]
-                    if ci >= 0:
-                        if ci == i:
-                            for iki, ki in enumerate(range(bind1, tind1)):
-                                for ikj, kj in enumerate(range(bind1, tind1)):
-                                    if ki != kj:
-                                        data[start_vals[i]+track_val+ikj*n1+iki] = Kernel_Eval(x[kj],y[kj],x[ki],y[ki])
-                                        iis[start_vals[i]+track_val+ikj*n1+iki] = ki
-                                        jjs[start_vals[i]+track_val+ikj*n1+iki] = kj
-                            track_val += n1*n1
-                        else:
-                            bind2 = botind[ci]
-                            tind2 = topind[ci]
-                            n2 = tind2 - bind2
-                            for iki, ki in enumerate(range(bind1, tind1)):
-                                for ikj, kj in enumerate(range(bind2, tind2)):
-                                    data[start_vals[i]+track_val+ikj*n1+iki] = Kernel_Eval(x[kj],y[kj],x[ki],y[ki])
-                                    iis[start_vals[i]+track_val+ikj*n1+iki] = ki
-                                    jjs[start_vals[i]+track_val+ikj*n1+iki] = kj
-                            track_val += n1*n2
-
-    @numba.njit("(f8[:],f8[:],i8[:],i8[:],f8[:],f8[:],f8[:],f8[:],i8[:],i8[:],f8[:],b1[:],i8)", parallel=True, fastmath=True)
-    def build_upwards_pass(x, y, botind, topind, xmid, ymid, xring, yring, iis, jjs, data, doit, track_val):
-        n = botind.shape[0]
-        n1 = xring.shape[0]
-        start_vals = np.empty(n, dtype=np.int64)
-        start_vals[0] = 0
-        for i in range(1,n):
-            adder = n1*(topind[i-1]-botind[i-1]) if doit[i-1] else 0
-            start_vals[i] = start_vals[i-1] + adder
-        for i in numba.prange(n):
-            if doit[i]:
-                bi = botind[i]
-                ti = topind[i]
-                n2 = ti - bi
-                for ki in range(n1):
-                    for ikj, kj in enumerate(range(bi, ti)):
-                        data[start_vals[i]+ki*n2+ikj] = Kernel_Eval(x[kj],y[kj],xring[ki]+xmid[i],yring[ki]+ymid[i])
-                        iis [start_vals[i]+ki*n2+ikj] = ki + i*n1
-                        jjs [start_vals[i]+ki*n2+ikj] = kj
-                track_val += n1*n2
-        return track_val
-
-    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])",parallel=True)
-    def numba_upwards_pass_old(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
-        n = botind.shape[0]
-        for i in numba.prange(n):
-            if compute_upwards[i] and (ns[i] > 0):
-                bi = botind[i]
-                ti = topind[i]
-                Kernel_Apply(x[bi:ti], y[bi:ti], xtarg, ytarg, xmid[i], ymid[i], tau[bi:ti], ucheck[i])
-
-    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:,:],f8[:])",parallel=True)
-    def numba_downwards_pass2_old(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
-        n = botind.shape[0]
-        for i in numba.prange(n):
-            if leaf[i] and (ns[i] > 0):
-                bi = botind[i]
-                ti = topind[i]
-                Kernel_Apply(xsrc, ysrc, x[bi:ti], y[bi:ti], -xmid[i], -ymid[i], local_expansions[i], sol[bi:ti])
-
-    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:],f8[:,:])", parallel=True, fastmath=True)
-    def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
-        n = botind.shape[0]
-        ne = xtarg.shape[0]
-        for i in numba.prange(n):
-            if compute_upwards[i] and (ns[i] > 0):
-                bi = botind[i]
-                ti = topind[i]
-                for ks in range(bi, ti):
-                    for kt in range(ne):
-                        ucheck[i,kt] += Kernel_Eval(x[ks], y[ks], xtarg[kt]+xmid[i], ytarg[kt]+ymid[i])*tau[ks]
-
-    @numba.njit("(f8[:],f8[:],i8[:],i8[:],i8[:],b1[:],f8[:],f8[:],f8[:],f8[:],f8[:,:],f8[:])", parallel=True, fastmath=True)
-    def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
-        n = botind.shape[0]
-        ne = xsrc.shape[0]
-        for i in numba.prange(n):
-            if leaf[i] and (ns[i] > 0):
-                bi = botind[i]
-                ti = topind[i]
-                for ks in range(ne):
-                    for kt in range(bi, ti):
-                        sol[kt] += Kernel_Eval(xsrc[ks], ysrc[ks], x[kt]-xmid[i], y[kt]-ymid[i])*local_expansions[i,ks]
-    return evaluate_neighbor_interactions, build_neighbor_interactions, build_upwards_pass, numba_upwards_pass, numba_downwards_pass2
-
-def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose):
+def _on_the_fly_fmm(tree, tau, Nequiv, kernel_functions, numba_functions, verbose):
     my_print = get_print_function(verbose)
 
-    (evaluate_neighbor_interactions, build_neighbor_interactions,      \
-        build_upwards_pass, numba_upwards_pass, numba_downwards_pass2) \
+    (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2) \
         = numba_functions
+    KF, KA, KAS = kernel_functions
 
     # allocate workspace in tree
     if not tree.workspace_allocated:
@@ -269,7 +287,7 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose):
     # get C2E (check solution to equivalent density) operator for each level
     E2C_LUs = []
     for ind in range(tree.levels):
-        equiv_to_check = Kernel_Form(small_xs[ind], small_ys[ind], \
+        equiv_to_check = Kernel_Form(KF, small_xs[ind], small_ys[ind], \
                                                 large_xs[ind], large_ys[ind])
         E2C_LUs.append(sp.linalg.lu_factor(equiv_to_check))
     # get Collected Equivalent Coordinates for each level
@@ -287,7 +305,7 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose):
                 small_ys[ind+1] - 0.5*widths[ind+1],
                 small_ys[ind+1] + 0.5*widths[ind+1],
             ])
-        Kern = Kernel_Form(collected_equiv_xs, collected_equiv_ys, \
+        Kern = Kernel_Form(KF, collected_equiv_xs, collected_equiv_ys, \
                                             large_xs[ind], large_ys[ind])
         M2MC.append(Kern)
     # get all required M2L translations
@@ -302,7 +320,7 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose):
                 else:
                     small_xhere = small_xs[ind] + (indx - 3)*widths[ind]
                     small_yhere = small_ys[ind] + (indy - 3)*widths[ind]
-                    M2Lhere[indx,indy] = Kernel_Form(small_xhere, \
+                    M2Lhere[indx,indy] = Kernel_Form(KF, small_xhere, \
                                             small_yhere, small_xs[ind], small_ys[ind])
         M2LS.append(M2Lhere)
     # get all Collected M2L translations
@@ -401,6 +419,79 @@ def _on_the_fly_fmm(tree, tau, Nequiv, Kernel_Form, numba_functions, verbose):
     # deorder the solution
     desorter = np.argsort(tree.ordv)
     return solution_ordered[desorter]
+
+################################################################################
+################################################################################
+# Everything below here relates to the planned FMM!
+
+def prepare_numba_functions_planned(Kernel_Eval):
+
+    @numba.njit("(f8[:],f8[:],b1[:],i8[:],i8[:],i8[:],i8[:,:],i8,i8[:],i8[:],f8[:])", parallel=True, fastmath=True)
+    def build_neighbor_interactions(x, y, leaf, ns, botind, topind, colleagues, n_data, iis, jjs, data):
+        n = botind.shape[0]
+        leaf_vals = np.zeros(n, dtype=np.int64)
+        for i in range(n):
+            track_val = 0
+            if leaf[i]:
+                for j in range(9):
+                    ci = colleagues[i,j]
+                    if ci >= 0:
+                        leaf_vals[i] += ns[i]*ns[ci]
+        start_vals = np.empty(n, dtype=np.int64)
+        start_vals[0] = 0
+        for i in range(1,n):
+            start_vals[i] = start_vals[i-1] + leaf_vals[i-1]
+        for i in numba.prange(n):
+            track_val = 0
+            if leaf[i]:
+                bind1 = botind[i]
+                tind1 = topind[i]
+                n1 = tind1 - bind1
+                for j in range(9):
+                    ci = colleagues[i,j]
+                    if ci >= 0:
+                        if ci == i:
+                            for iki, ki in enumerate(range(bind1, tind1)):
+                                for ikj, kj in enumerate(range(bind1, tind1)):
+                                    if ki != kj:
+                                        data[start_vals[i]+track_val+ikj*n1+iki] = Kernel_Eval(x[kj],y[kj],x[ki],y[ki])
+                                        iis[start_vals[i]+track_val+ikj*n1+iki] = ki
+                                        jjs[start_vals[i]+track_val+ikj*n1+iki] = kj
+                            track_val += n1*n1
+                        else:
+                            bind2 = botind[ci]
+                            tind2 = topind[ci]
+                            n2 = tind2 - bind2
+                            for iki, ki in enumerate(range(bind1, tind1)):
+                                for ikj, kj in enumerate(range(bind2, tind2)):
+                                    data[start_vals[i]+track_val+ikj*n1+iki] = Kernel_Eval(x[kj],y[kj],x[ki],y[ki])
+                                    iis[start_vals[i]+track_val+ikj*n1+iki] = ki
+                                    jjs[start_vals[i]+track_val+ikj*n1+iki] = kj
+                            track_val += n1*n2
+
+    @numba.njit("(f8[:],f8[:],i8[:],i8[:],f8[:],f8[:],f8[:],f8[:],i8[:],i8[:],f8[:],b1[:],i8)", parallel=True, fastmath=True)
+    def build_upwards_pass(x, y, botind, topind, xmid, ymid, xring, yring, iis, jjs, data, doit, track_val):
+        n = botind.shape[0]
+        n1 = xring.shape[0]
+        start_vals = np.empty(n, dtype=np.int64)
+        start_vals[0] = 0
+        for i in range(1,n):
+            adder = n1*(topind[i-1]-botind[i-1]) if doit[i-1] else 0
+            start_vals[i] = start_vals[i-1] + adder
+        for i in numba.prange(n):
+            if doit[i]:
+                bi = botind[i]
+                ti = topind[i]
+                n2 = ti - bi
+                for ki in range(n1):
+                    for ikj, kj in enumerate(range(bi, ti)):
+                        data[start_vals[i]+ki*n2+ikj] = Kernel_Eval(x[kj],y[kj],xring[ki]+xmid[i],yring[ki]+ymid[i])
+                        iis [start_vals[i]+ki*n2+ikj] = ki + i*n1
+                        jjs [start_vals[i]+ki*n2+ikj] = kj
+                track_val += n1*n2
+        return track_val
+
+    return evaluate_neighbor_interactions, build_neighbor_interactions, build_upwards_pass, numba_upwards_pass, numba_downwards_pass2
 
 @numba.njit("(b1[:],i8[:],i8[:,:],f8[:],f8[:],f8[:,:],f8[:,:,:,:],i8)", parallel=True, cache=True)
 def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M2Ms, Nequiv):

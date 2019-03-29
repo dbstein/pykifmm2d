@@ -4,7 +4,8 @@ import numba
 
 @numba.njit("f8(f8,f8,f8,f8)", fastmath=True)
 def laplace_eval(sx, sy, tx, ty):
-    return -0.25*np.log((tx-sx)**2 + (ty-sy)**2)/np.pi
+    scale = -0.25/np.pi
+    return scale*np.log((tx-sx)**2 + (ty-sy)**2)
 
 @numba.njit("(f8[:],f8[:],f8[:],f8[:],f8,f8,f8[:],f8[:])",parallel=True)
 def laplace_kernel(sx, sy, tx, ty, shiftx, shifty, charge, pot):
