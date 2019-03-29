@@ -24,11 +24,22 @@ random2 = pykifmm2d.utils.random2
 Prepare_Functions_OTF     = pykifmm2d.fmm.prepare_numba_functions_on_the_fly
 Prepare_K_Functions       = pykifmm2d.fmm.Get_Kernel_Functions
 
+# Laplace Kernel
+@numba.njit("f8(f8,f8,f8,f8)", fastmath=True)
+def Laplace_Kernel_Eval(sx, sy, tx, ty):
+    scale = -0.25/np.pi
+    return scale*np.log((tx-sx)**2 + (ty-sy)**2)
+# associated kernel evaluation functions
+kernel_functions = Prepare_K_Functions(Laplace_Kernel_Eval)
+(KF, KA, KAS) = kernel_functions
+# jit compile internal numba functions
+numba_functions = Prepare_Functions_OTF(Laplace_Kernel_Eval)
+
 N_total = 1000*1000*10
 
 # construct some data to run FMM on
 N_clusters = 50
-N_per_cluster = 1000
+N_per_cluster = 10000
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
 px, py = random2(N_total, -1, 1)
@@ -44,15 +55,6 @@ N_equiv = 48
 
 # get random density
 tau = np.random.rand(N_total)/N_total
-
-# Laplace Kernel
-@numba.njit("f8(f8,f8,f8,f8)", fastmath=True)
-def Laplace_Kernel_Eval(sx, sy, tx, ty):
-    scale = -0.25/np.pi
-    return scale*np.log((tx-sx)**2 + (ty-sy)**2)
-# associated kernel evaluation functions
-kernel_functions = Prepare_K_Functions(Laplace_Kernel_Eval)
-(KF, KA, KAS) = kernel_functions
 
 print('\nLaplace Kernel Direct vs. FMM demonstration with', N_total, 'points.')
 
@@ -81,8 +83,6 @@ if reference:
             print('')
             reference = False
 
-# jit compile internal numba functions
-numba_functions = Prepare_Functions_OTF(Laplace_Kernel_Eval)
 # do my FMM
 st = time.time()
 fmm_eval, tree = pykifmm2d.on_the_fly_fmm(px, py, tau, N_equiv, N_cutoff, \
@@ -91,9 +91,6 @@ time_fmm_eval = (time.time() - st)*1000
 if reference:
     err = np.abs(fmm_eval - reference_eval)
     print('\nMaximum difference:            {:0.2e}'.format(err.max()))
-
-
-
 
 
 

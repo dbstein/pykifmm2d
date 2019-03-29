@@ -145,6 +145,7 @@ def Get_Kernel_Functions(Kernel_Eval):
             out[j] = ja
 
     return KF, KA, KAS
+
 def Kernel_Form(KF, sx, sy, tx=None, ty=None, out=None):
     if tx is None or ty is None:
         tx = sx
@@ -163,6 +164,7 @@ def Kernel_Form(KF, sx, sy, tx=None, ty=None, out=None):
     if isself:
         np.fill_diagonal(out, 0.0)
     return out
+
 def Kernel_Apply(KA, KAS, sx, sy, tau, tx=None, ty=None, out=None):
     if tx is None or ty is None:
         tx = sx
@@ -187,16 +189,15 @@ def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, kernel_functions, numba_functions
     """
     On-the-fly KIFMM
         computes sum_{i!=j} G(x_i,x_j) * tau_j
-        for greens function G specified in the functions:
-            Kernel_Apply and Kernel_Form
-    Inputs (all required except Kernel Apply and verbose):
+        for greens function G specified in the kernel_ and numba_ functions
+    Inputs (all required except verbose):
         x,       float(nsource): x-coordinates of sources 
         y,       float(nsource): y-coordinates of sources
         tau,     float(nsource): density
         Nequiv,  int:            number of points used in check/equiv surfaces
         Ncutoff, int:            maximum number of points per leaf node
-        Kernel_Apply, function:  Kernel Apply function
-        Kernel_Form,  function:  Kernel Form function
+        kernel_functions:        see examples
+        numba_functions:         see examples
         verbose, bool:           enable verbose output
     Outputs:
         potential, float(nsource)
@@ -206,26 +207,12 @@ def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, kernel_functions, numba_functions
             For the Laplace problem, N=64 gives ~machine precision
         Ncutoff determines the balance of work between FMM and local evals
             The best value for this depends on your machine and how efficient
-            your Kernel_Apply/Kernel_Form functions are. If your functions are
-            very efficient, set this high (like 2000) for best efficiency. If
-            your functions are very slow, set this low but larger than Nequiv.
-        Kernel_Form:
-            This is a function that evaluates a density, with inputs:
-                (sx, sy, tau, tx=None, ty=None)
-                where sx, sy are source nodes; tx, ty are target nodes
-                    and tau is the density
-                if tx and ty are not provided, should provide a 'self-eval',
-                    i.e. not computing the diagonal terms
-        Kernel_Apply:
-            This is a function that outputs an evaluation matrix, with inputs:
-                (sx, sy, tx=None, ty=None)
-                where sx, sy are source nodes; tx, ty are target nodes
-                if tx and ty are not provided, should provide a 'self-eval'
-                matrix, i.e. with zero on the diagonal
-            If this function is not provided, one will be generated using the
-                kernel_form function, instead.
-        See examples for more information on how to construct the Kernel_Form
-            and the Kernel_Apply functions
+            your kernel functions are. If your functions are
+            very efficient, set this higher for best efficiency. If
+            your functions are very slow, set this lower
+                (low: ~20, high: ~100)
+        See examples for more information on how to construct the
+            kernel_functions and numba_functions
     """
     my_print = get_print_function(verbose)
     my_print('\nBeginning FMM')
@@ -239,9 +226,7 @@ def on_the_fly_fmm(x, y, tau, Nequiv, Ncutoff, kernel_functions, numba_functions
     KF, KA, KAS = kernel_functions
     if tree.levels <= 2:
         # just do a direct evaluation in this case
-        solution = np.zeros_like(x)
-        KAS(x, y, tau, solution)
-        # solution = Kernel_Apply(KA, KAS, x, y, tau)
+        solution = Kernel_Apply(KA, KAS, x, y, tau)
     else:
         solution = _on_the_fly_fmm(tree, tau, Nequiv, kernel_functions, numba_functions, verbose)
     fmm_time = (time.time()-st)*1000
@@ -419,6 +404,18 @@ def _on_the_fly_fmm(tree, tau, Nequiv, kernel_functions, numba_functions, verbos
     # deorder the solution
     desorter = np.argsort(tree.ordv)
     return solution_ordered[desorter]
+
+
+
+
+
+
+
+
+
+
+
+
 
 ################################################################################
 ################################################################################

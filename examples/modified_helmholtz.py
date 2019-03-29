@@ -1,9 +1,7 @@
-try:
-	import pyfmmlib2d
-except:
-	pass
 import pykifmm2d
+from pykifmm2d.misc.numba_special_functions import _numba_k0
 import numpy as np
+import numba
 import time
 import matplotlib as mpl
 mpl.use('TkAgg')
@@ -24,15 +22,25 @@ And gives error <5e-14
 """
 
 random2 = pykifmm2d.utils.random2
-MH_get = pykifmm2d.kernels.modified_helmholtz.generate_modified_helmholtz_functions
-Prepare_Functions = pykifmm2d.fmm.prepare_numba_functions
+Prepare_Functions_OTF     = pykifmm2d.fmm.prepare_numba_functions_on_the_fly
+Prepare_K_Functions       = pykifmm2d.fmm.Get_Kernel_Functions
 
-N_total = 1000*1000
+# Modified Helmholtz Kernel
+@numba.njit("f8(f8,f8,f8,f8)", fastmath=True)
+def MH_Eval(sx, sy, tx, ty):
+    return _numba_k0(helmholtz_k*np.sqrt((tx-sx)**2 + (ty-sy)**2))
+# associated kernel evaluation functions
+kernel_functions = Prepare_K_Functions(MH_Eval)
+(KF, KA, KAS) = kernel_functions
+# jit compile internal numba functions
+numba_functions = Prepare_Functions_OTF(MH_Eval)
+
+N_total = 1000*1000*1
 helmholtz_k = 1.0
 
 # construct some data to run FMM on
 N_clusters = 50
-N_per_cluster = 100
+N_per_cluster = 1000
 N_random = N_total - N_clusters*N_per_cluster
 center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
 px, py = random2(N_total, -1, 1)
@@ -51,67 +59,60 @@ tau = np.random.rand(N_total)/N_total
 
 print('\nModified Helmholtz Kernel Direct vs. FMM demonstration with', N_total, 'points.')
 
-# get helmholtz functions
-MH_Kernel_Form, MH_Kernel_Apply, MH_Kernel_Self_Apply, MH_Kernel_Eval = MH_get(helmholtz_k)
-
 # get reference solution
 reference = True
 if reference:
-	# if N_total <= 50000:
-	if False:
-		# by Direct Sum
-		st = time.time()
-		reference_eval = np.zeros(N_total, dtype=float)
-		MH_Kernel_Self_Apply(px, py, tau, reference_eval)
-		time_direct_eval = (time.time() - st)*1000
-		print('\nDirect evaluation took:        {:0.1f}'.format(time_direct_eval))
-	else:
-		# by FMMLIB2D, if available
-		try:
-			source = np.row_stack([px, py])
-			st = time.time()
-			out = pyfmmlib2d.HFMM(source, charge=tau, compute_source_potential=True, helmholtz_parameter=1j*helmholtz_k)
-			et = time.time()
-			time_fmmlib_eval = (et-st)*1000
-			reference_eval = out['source']['u']/(0.5/np.pi)
-			print('FMMLIB evaluation took:        {:0.1f}'.format(time_fmmlib_eval))
-		except:
-			print('')
-			reference = False
+    if N_total <= 50000:
+        # by Direct Sum
+        st = time.time()
+        reference_eval = np.zeros(N_total, dtype=float)
+        KAS(px, py, tau, out=reference_eval)
+        time_direct_eval = (time.time() - st)*1000
+        print('\nDirect evaluation took:        {:0.1f}'.format(time_direct_eval))
+    else:
+        # by FMMLIB2D, if available
+        try:
+            import pyfmmlib2d
+            source = np.row_stack([px, py])
+            st = time.time()
+            out = pyfmmlib2d.HFMM(source, charge=tau, compute_source_potential=True, helmholtz_parameter=1j*helmholtz_k)
+            et = time.time()
+            time_fmmlib_eval = (et-st)*1000
+            reference_eval = out['source']['u']/(0.5/np.pi)
+            print('FMMLIB evaluation took:        {:0.1f}'.format(time_fmmlib_eval))
+        except:
+            print('')
+            reference = False
 
-# jit compile internal numba functions
-numba_functions = Prepare_Functions(MH_Kernel_Apply, MH_Kernel_Self_Apply, MH_Kernel_Eval)
-# do on-the-fly FMM
+# do my FMM
 st = time.time()
 fmm_eval, tree = pykifmm2d.on_the_fly_fmm(px, py, tau, N_equiv, N_cutoff, \
-                    MH_Kernel_Form, numba_functions, verbose=True)
+                    kernel_functions, numba_functions, verbose=True)
 time_fmm_eval = (time.time() - st)*1000
 if reference:
-	err = np.abs(fmm_eval - reference_eval)
-	print('\nMaximum difference:            {:0.2e}'.format(err.max()))
+    err = np.abs(fmm_eval - reference_eval)
+    print('\nMaximum difference:            {:0.2e}'.format(err.max()))
 
-# plan fmm
-st = time.time()
-fmm_plan = pykifmm2d.fmm.fmm_planner(px, py, N_equiv, N_cutoff, MH_Kernel_Form, numba_functions, verbose=True)
-planning_time = (time.time()-st)*1000
-# execute fmm
-st = time.time()
-fmm_eval = pykifmm2d.fmm.planned_fmm(fmm_plan, tau)
-time_fmm_eval = (time.time() - st)*1000
 
-print('\nFMM planning took:               {:0.1f}'.format(planning_time))
-print('FMM evaluation took:             {:0.1f}'.format(time_fmm_eval))
-if reference:
-	err = np.abs(fmm_eval - reference_eval)
-	print('Maximum difference:              {:0.2e}'.format(err.max()))
 
-"""
-import line_profiler
-%load_ext line_profiler
-%lprun -f pykifmm2d.fmm.planned_fmm pykifmm2d.fmm.planned_fmm(fmm_plan, tau)
 
-import line_profiler
-%load_ext line_profiler
-%lprun -f pykifmm2d.fmm.fmm_planner fmm_plan = pykifmm2d.fmm.fmm_planner(px, py, N_equiv, N_cutoff, MH_Kernel_Form, numba_functions, verbose=True)
-"""
+
+
+
+# # plan fmm
+# st = time.time()
+# fmm_plan = pykifmm2d.fmm.fmm_planner(px, py, N_equiv, N_cutoff, Laplace_Kernel_Form, numba_functions, verbose=True)
+# planning_time = (time.time()-st)*1000
+# # execute fmm
+# st = time.time()
+# fmm_eval = pykifmm2d.fmm.planned_fmm(fmm_plan, tau)
+# time_fmm_eval = (time.time() - st)*1000
+# err = np.abs(fmm_eval - reference_eval)
+
+# print('\nFMM planning took:               {:0.1f}'.format(planning_time))
+# print('FMM evaluation took:             {:0.1f}'.format(time_fmm_eval))
+# print('Maximum difference:              {:0.2e}'.format(err.max()))
+
+
+
 
