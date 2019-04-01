@@ -7,6 +7,8 @@ import time
 from .tree import Tree
 from .misc.mkl_sparse import SpMV_viaMKL
 
+cacheit = False
+
 def get_level_information(node_width, theta):
     # get information for this level
     dd = 0.01
@@ -488,9 +490,9 @@ def prepare_numba_functions_planned(Kernel_Eval):
                 track_val += n1*n2
         return track_val
 
-    return evaluate_neighbor_interactions, build_neighbor_interactions, build_upwards_pass, numba_upwards_pass, numba_downwards_pass2
+    return build_neighbor_interactions, build_upwards_pass
 
-@numba.njit("(b1[:],i8[:],i8[:,:],f8[:],f8[:],f8[:,:],f8[:,:,:,:],i8)", parallel=True, cache=True)
+@numba.njit("(b1[:],i8[:],i8[:,:],f8[:],f8[:],f8[:,:],f8[:,:,:,:],i8)", parallel=True, cache=cacheit)
 def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M2Ms, Nequiv):
     n = doit.shape[0]
     for i in numba.prange(n):
@@ -525,13 +527,12 @@ class FMM_Plan(object):
     def extract(self):
         return self.tree, self.theta, self.large_xs, self.large_ys, self.E2C_LUs, self.M2MC, self.M2LS, self.CM2LS, self.neighbor_mats, self.upwards_mats, self.downwards_mats, self.numba_functions, self.verbose
 
-def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=False):
+def fmm_planner(x, y, Nequiv, Ncutoff, kernel_functions, numba_functions, verbose=False):
     my_print = get_print_function(verbose)
     my_print('\nPlanning FMM')
 
-    (evaluate_neighbor_interactions, build_neighbor_interactions,      \
-        build_upwards_pass, numba_upwards_pass, numba_downwards_pass2) \
-        = numba_functions
+    KF, KA, KAS = kernel_functions
+    build_neighbor_interactions, build_upwards_pass = numba_functions
 
     # building a tree
     st = time.time()
@@ -568,7 +569,7 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
     # get C2E (check solution to equivalent density) operator for each level
     E2C_LUs = []
     for ind in range(tree.levels):
-        equiv_to_check = Kernel_Form(small_xs[ind], small_ys[ind], \
+        equiv_to_check = Kernel_Form(KF, small_xs[ind], small_ys[ind], \
                                                 large_xs[ind], large_ys[ind])
         E2C_LUs.append(sp.linalg.lu_factor(equiv_to_check))
     # get Collected Equivalent Coordinates for each level
@@ -586,7 +587,7 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
                 small_ys[ind+1] - 0.5*widths[ind+1],
                 small_ys[ind+1] + 0.5*widths[ind+1],
             ])
-        Kern = Kernel_Form(collected_equiv_xs, collected_equiv_ys, \
+        Kern = Kernel_Form(KF, collected_equiv_xs, collected_equiv_ys, \
                                             large_xs[ind], large_ys[ind])
         M2MC.append(Kern)
     # get all required M2L translations
@@ -601,7 +602,7 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
                 else:
                     small_xhere = small_xs[ind] + (indx - 3)*widths[ind]
                     small_yhere = small_ys[ind] + (indy - 3)*widths[ind]
-                    M2Lhere[indx,indy] = Kernel_Form(small_xhere, \
+                    M2Lhere[indx,indy] = Kernel_Form(KF, small_xhere, \
                                             small_yhere, small_xs[ind], small_ys[ind])
         M2LS.append(M2Lhere)
     # get all Collected M2L translations
@@ -710,7 +711,7 @@ def fmm_planner(x, y, Nequiv, Ncutoff, Kernel_Form, numba_functions, verbose=Fal
     fmm_plan = FMM_Plan(tree, theta, large_xs, large_ys, E2C_LUs, M2MC, M2LS, CM2LS, neighbor_mat, upwards_mats, downwards_mats, numba_functions, verbose)
     return fmm_plan
 
-@numba.njit("i8(b1[:],i8[:],i8[:,:])", parallel=False, cache=True)
+@numba.njit("i8(b1[:],i8[:],i8[:,:])", parallel=False, cache=cacheit)
 def numba_get_neighbor_length(leaf, ns, colleagues):
     n = 0
     for i in range(leaf.shape[0]):
@@ -732,7 +733,7 @@ def set_matval(xx, xn, ti):
         xx = xxn
     return xx
 
-@numba.njit("(f8[:,:],f8[:,:],i8[:],i8)", parallel=True, cache=True)
+@numba.njit("(f8[:,:],f8[:,:],i8[:],i8)", parallel=True, cache=cacheit)
 def numba_distribute(ucs, temp, pi, n):
     for i in numba.prange(n):
         ucs[pi[i]] = temp[i]
@@ -743,9 +744,7 @@ def planned_fmm(fmm_plan, tau):
     Nequiv = theta.shape[0]
 
     my_print = get_print_function(verbose)
-    (evaluate_neighbor_interactions, build_neighbor_interactions,      \
-        build_upwards_pass, numba_upwards_pass, numba_downwards_pass2) \
-        = numba_functions
+    (build_neighbor_interactions, build_upwards_pass) = numba_functions
 
     my_print('Executing FMM')
 

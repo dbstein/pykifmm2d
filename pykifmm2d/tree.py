@@ -8,9 +8,10 @@ Same as tree3, but getting rid of the separate arrays for
 the 'fake leaves', hopefully this cleans up the code a bit
 """
 
+cacheit = False
 tree_search_crossover = 100
 
-@numba.njit("(f8[:],f8[:],f8,f8,i8,i1[:],i8[4])", cache=True)
+@numba.njit("(f8[:],f8[:],f8,f8,i8,i1[:],i8[4])", cache=cacheit)
 def classify(x, y, midx, midy, n, cl, ns):
     """
     Determine which 'class' each point belongs to in the current node
@@ -34,7 +35,7 @@ def classify(x, y, midx, midy, n, cl, ns):
         cla = 2*highx + highy
         cl[i] = cla
         ns[cla] += 1
-@numba.njit("i1(i8,i8[4])", cache=True)
+@numba.njit("i1(i8,i8[4])", cache=cacheit)
 def get_target(i, nns):
     """
     Used in the reordering routine, determines which 'class' we
@@ -55,7 +56,7 @@ def get_target(i, nns):
     else:
         target = 3
     return target
-@numba.njit(["(f8[:],i8,i8)", "(i1[:],i8,i8)", "(i8[:],i8,i8)"], cache=True)
+@numba.njit(["(f8[:],i8,i8)", "(i1[:],i8,i8)", "(i8[:],i8,i8)"], cache=cacheit)
 def swap(x, i, j):
     """
     Inputs:
@@ -67,7 +68,7 @@ def swap(x, i, j):
     a = x[i]
     x[i] = x[j]
     x[j] = a
-@numba.njit("i8[4](i8[4])", cache=True)
+@numba.njit("i8[4](i8[4])", cache=cacheit)
 def get_inds(ns):
     """
     Compute cumulative sum of the number of points in each subnode
@@ -82,7 +83,7 @@ def get_inds(ns):
     for i in range(3):
         inds[i+1] = inds[i] + ns[i]
     return inds
-@numba.njit("i8[4](f8[:],f8[:],i8[:],f8,f8)", cache=True)
+@numba.njit("i8[4](f8[:],f8[:],i8[:],f8,f8)", cache=cacheit)
 def reorder_inplace(x, y, ordv, midx, midy):
     """
     This function plays an integral role in tree formation and does
@@ -124,7 +125,7 @@ def reorder_inplace(x, y, ordv, midx, midy):
                 keep_going = False
     return nns
 
-@numba.njit("(f8[:],f8[:],i8[:],b1[:],f8,f8[:],f8[:],i8[:],i8[:],b1[:],f8[:],f8[:],i8[:],i8[:],i8[:],i8[:],i8,b1)", parallel=True, cache=True)
+@numba.njit("(f8[:],f8[:],i8[:],b1[:],f8,f8[:],f8[:],i8[:],i8[:],b1[:],f8[:],f8[:],i8[:],i8[:],i8[:],i8[:],i8,b1)", parallel=True, cache=cacheit)
 def divide_and_reorder(x, y, ordv, tosplit, half_width, xmid, ymid, bot_ind, \
                 top_ind, leaf, new_xmin, new_ymin, new_bot_ind,
                 new_top_ind, parent_ind, children_ind, children_start_ind, Xlist):
@@ -188,6 +189,43 @@ def divide_and_reorder(x, y, ordv, tosplit, half_width, xmid, ymid, bot_ind, \
                 parent_ind[4*split_tracker + j] = i
             children_ind[i] = children_start_ind + 4*split_tracker
 
+# @numba.njit("(f8[:],f8[:],i8[:],b1[:],f8,f8[:],f8[:],i8[:],i8[:],b1[:],f8[:],f8[:],i8[:],i8[:],i8[:],i8[:],i8,b1)", parallel=True, cache=cacheit)
+# def reorder_targets(tx, ty, tordv):
+#     num_nodes = xmid.shape[0]
+#     split_ids = np.zeros(num_nodes, dtype=np.int64)
+#     split_tracker = 0
+#     for i in range(num_nodes):
+#         if tosplit[i]:
+#             split_ids[i] = split_tracker
+#             split_tracker += 1
+#     for i in numba.prange(num_nodes):
+#         if tosplit[i]:
+#             split_tracker = split_ids[i]
+#             bi = bot_ind[i]
+#             ti = top_ind[i]
+#             nns = reorder_inplace(x[bi:ti], y[bi:ti], ordv[bi:ti], xmid[i], ymid[i])
+#             new_xmin[4*split_tracker + 0] = xmid[i] - half_width
+#             new_xmin[4*split_tracker + 1] = xmid[i] - half_width
+#             new_xmin[4*split_tracker + 2] = xmid[i]
+#             new_xmin[4*split_tracker + 3] = xmid[i]
+#             new_ymin[4*split_tracker + 0] = ymid[i] - half_width
+#             new_ymin[4*split_tracker + 1] = ymid[i]
+#             new_ymin[4*split_tracker + 2] = ymid[i] - half_width
+#             new_ymin[4*split_tracker + 3] = ymid[i]
+#             new_bot_ind[4*split_tracker + 0] = bot_ind[i] + nns[0]
+#             new_bot_ind[4*split_tracker + 1] = bot_ind[i] + nns[1]
+#             new_bot_ind[4*split_tracker + 2] = bot_ind[i] + nns[2]
+#             new_bot_ind[4*split_tracker + 3] = bot_ind[i] + nns[3]
+#             new_top_ind[4*split_tracker + 0] = bot_ind[i] + nns[1]
+#             new_top_ind[4*split_tracker + 1] = bot_ind[i] + nns[2]
+#             new_top_ind[4*split_tracker + 2] = bot_ind[i] + nns[3]
+#             new_top_ind[4*split_tracker + 3] = top_ind[i]
+#             if not Xlist:
+#                 leaf[i] = False
+#             for j in range(4):
+#                 parent_ind[4*split_tracker + j] = i
+#             children_ind[i] = children_start_ind + 4*split_tracker
+
 def get_new_level(level, x, y, ordv, ppl):
     """
     Split any nodes in level that have more than ppl points
@@ -219,7 +257,7 @@ def get_new_level(level, x, y, ordv, ppl):
     keep_going = np.any(new_level.ns > ppl)
     return new_level, keep_going
 
-@numba.njit("(f8[:],f8[:],i8[:,:],f8)", parallel=True, cache=True)
+@numba.njit("(f8[:],f8[:],i8[:,:],f8)", parallel=True, cache=cacheit)
 def numba_tag_colleagues(xmid, ymid, colleagues, dist):
     n = xmid.shape[0]
     dist2 = dist*dist
@@ -233,7 +271,7 @@ def numba_tag_colleagues(xmid, ymid, colleagues, dist):
                 colleagues[i,itrack] = j
                 itrack += 1
 
-@numba.njit("f8[:],f8[:],f8,i8[:],i8[:,:],b1[:],i8[:],i8[:,:]", parallel=True, cache=True)
+@numba.njit("f8[:],f8[:],f8,i8[:],i8[:,:],b1[:],i8[:],i8[:,:]", parallel=True, cache=cacheit)
 def numba_loop_colleagues(xmid, ymid, dist, parent_ind, ancestor_colleagues, 
                                 ancestor_leaf, ancestor_child_inds, colleagues):
     n = xmid.shape[0]
@@ -368,8 +406,10 @@ class Level(object):
         self.RSEQD = np.reshape(self.Equiv_Densities, resh)
         if self.RSEQD.flags.owndata:
             raise Exception('Something went wrong with reshaping the equivalent densities, it made a copy instead of a view.')
+    def add_and_reorder_targets(self, tx, ty):
+        pass
 
-@numba.njit("(i8[:],b1[:],i8[:],i8[:])", parallel=True, cache=True)
+@numba.njit("(i8[:],b1[:],i8[:],i8[:])", parallel=True, cache=cacheit)
 def numba_get_depths(depths, leaves, children_ind, descendant_depths):
     n = depths.shape[0]
     for i in numba.prange(n):
@@ -378,7 +418,7 @@ def numba_get_depths(depths, leaves, children_ind, descendant_depths):
             max_child_depth = np.max(child_depths)
             depths[i] = max_child_depth + 1
 
-@numba.njit("(i8[:],i8[:,:],b1[:],b1[:])", parallel=True, cache=True)
+@numba.njit("(i8[:],i8[:,:],b1[:],b1[:])", parallel=True, cache=cacheit)
 def numba_get_bads(depths, colleagues, leaf, bads):
     n = depths.shape[0]
     for i in numba.prange(n):
@@ -392,7 +432,7 @@ def numba_get_bads(depths, colleagues, leaf, bads):
                         badi = True
             bads[i] = badi
 
-@numba.njit("(i8[:],i8[:,:],b1[:],b1[:])", parallel=True, cache=True)
+@numba.njit("(i8[:],i8[:,:],b1[:],b1[:])", parallel=True, cache=cacheit)
 def numba_get_Xlist(depths, colleagues, leaf, Xlist):
     n = depths.shape[0]
     for i in numba.prange(n):
@@ -410,12 +450,14 @@ class Tree(object):
     """
     Quadtree object for use in computing FMMs
     """
-    def __init__(self, x, y, ppl):
+    def __init__(self, x, y, ppl, tx=None, ty=None):
         """
         Inputs:
             x,   f8[:], x coordinates for which tree will be constructed
             y,   f8[:], y coordinates for which tree will be constructed
             ppl, i8,    cutoff value that triggers leaf refinement
+            tx,  f8[:], x coordinates of targets, optional
+            ty,  f8[:], y coordinates of targets, optional
         """
         self.x = x.copy()
         self.y = y.copy()
@@ -432,12 +474,41 @@ class Tree(object):
         self.ymax = mmax
         self.N = self.x.shape[0]
         self.workspace_allocated = False
+        # check on targets
+        if tx is None or ty is None:
+            self.full_xmin = self.xmin
+            self.full_xmax = self.xmax
+            self.full_ymin = self.ymin
+            self.full_ymax = self.ymax
+            self.targets = False
+            self.n_targ = 0
+        else:
+            self.tx = tx.copy()
+            self.ty = ty.copy()
+            txmin = self.tx.min()
+            txmax = self.tx.max()
+            tymin = self.ty.min()
+            tymax = self.ty.min()
+            tmin = int(np.floor(np.min([txmin, tymin])))
+            tmax = int(np.ceil (np.max([txmax, tymax])))
+            self.txmin = tmin
+            self.txmax = tmax
+            self.tymin = tmin
+            self.tymax = tmax
+            rmin = min(mmin, tmin)
+            rmax = max(mmax, tmax)
+            self.full_xmin = min(self.xmin, self.txmin)
+            self.full_xmax = max(self.xmax, self.txmax)
+            self.full_ymin = min(self.ymin, self.tymin)
+            self.full_ymax = max(self.ymax, self.tymax)
+            self.targets = True
+            self.n_targ = self.tx.shape[0]
         # vector to allow reordering of density tau
         self.ordv = np.arange(self.N)
         self.Levels = []
         # setup the first level
-        xminarr = np.array((self.xmin,))
-        yminarr = np.array((self.ymin,))
+        xminarr = np.array((self.full_xmin,))
+        yminarr = np.array((self.full_ymin,))
         width = self.xmax-self.xmin
         bot_ind_arr = np.array((0,))
         top_ind_arr = np.array((self.N,))
@@ -463,6 +534,12 @@ class Tree(object):
         self.split_Xlist()
         # get not leaves
         self.get_not_leaves()
+        # divide targets
+        if self.targets:
+            self.divide_targets()
+    def divide_targets(self):
+        for ind, Level in enumerate(self.Levels):
+            Level.add_and_reorder_targets(self.tx, self.ty)
     def tag_colleagues(self):
         """
         Tag colleagues (neighbors at same level) for every node in tree
@@ -512,6 +589,10 @@ class Tree(object):
         for Level in self.Levels[1:]:
             Level.allocate_workspace(Nequiv)
         self.workspace_allocated = True
+
+
+
+
     """
     Information functions
     """
@@ -593,22 +674,6 @@ class Tree(object):
             lines.extend(ll)
         lc = mpl.collections.LineCollection(lines, linewidth=1)
         ax.add_collection(lc)
-        # try:
-        #     for ind in range(1, self.levels-1):
-        #         level = self.Levels[ind]
-        #         nxlist = np.sum(level.Xlist)
-        #         xls = level.xmin[level.Xlist]
-        #         xms = level.xmid[level.Xlist]
-        #         xhs = level.xmax[level.Xlist]
-        #         yls = level.ymin[level.Xlist]
-        #         yms = level.ymid[level.Xlist]
-        #         yhs = level.ymax[level.Xlist]
-        #         clines.extend([[(xms[i], yls[i]), (xms[i], yhs[i])] for i in range(nxlist)])
-        #         clines.extend([[(xls[i], yms[i]), (xhs[i], yms[i])] for i in range(nxlist)])
-        #     clc = mpl.collections.LineCollection(clines, colors='gray', alpha=0.25)
-        #     ax.add_collection(clc)
-        # except:
-        #     pass
         ax.set_xlim(self.xmin, self.xmax)
         ax.set_ylim(self.ymin, self.ymax)
     def print_structure(self):
