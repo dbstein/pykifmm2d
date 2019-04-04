@@ -403,6 +403,7 @@ class Level(object):
         self.Check_Us = np.zeros([self.n_node, Nequiv], dtype=float)
         self.Equiv_Densities = np.zeros([self.n_node, Nequiv], dtype=float)
         resh = (int(self.n_node/4), int(Nequiv*4))
+        self.resh = resh
         self.RSEQD = np.reshape(self.Equiv_Densities, resh)
         if self.RSEQD.flags.owndata:
             raise Exception('Something went wrong with reshaping the equivalent densities, it made a copy instead of a view.')

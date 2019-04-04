@@ -1,4 +1,5 @@
 import pykifmm2d
+import pykifmm2d.svd_fmm
 import numpy as np
 import numba
 import time
@@ -30,6 +31,7 @@ Prepare_K_Functions    = pykifmm2d.fmm.Get_Kernel_Functions
 def Laplace_Kernel_Eval(sx, sy, tx, ty):
     scale = -0.25/np.pi
     return scale*np.log((tx-sx)**2 + (ty-sy)**2)
+
 # associated kernel evaluation functions
 kernel_functions = Prepare_K_Functions(Laplace_Kernel_Eval)
 (KF, KA, KAS) = kernel_functions
@@ -40,20 +42,25 @@ numba_functions_plan = Prepare_Functions_PLAN(Laplace_Kernel_Eval)
 N_total = 1000*1000
 
 # construct some data to run FMM on
-N_clusters = 10
-N_per_cluster = 1000
-N_random = N_total - N_clusters*N_per_cluster
-center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
-px, py = random2(N_total, -1, 1)
-px[:N_random] *= 100
-py[:N_random] *= 100
-px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
-py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
-px /= 100
-py /= 100
+if True:
+    N_clusters = 10
+    N_per_cluster = 10000
+    N_random = N_total - N_clusters*N_per_cluster
+    center_clusters_x, center_clusters_y = random2(N_clusters, -99, 99)
+    px, py = random2(N_total, -1, 1)
+    px[:N_random] *= 100
+    py[:N_random] *= 100
+    px[N_random:] += np.repeat(center_clusters_x, N_per_cluster)
+    py[N_random:] += np.repeat(center_clusters_y, N_per_cluster)
+    px /= 100
+    py /= 100
+else:
+    rand_theta = np.random.rand(N_total)*2*np.pi
+    px = np.cos(rand_theta)
+    py = np.sin(rand_theta)
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 50
+N_cutoff = 100
 # number of points used in Check/Equivalent Surfaces
 N_equiv = 48
 
@@ -89,27 +96,35 @@ if reference:
 
 # do my FMM
 st = time.time()
-fmm_eval, tree = pykifmm2d.on_the_fly_fmm(px, py, tau, N_equiv, N_cutoff, \
+fmm_eval, tree = pykifmm2d.svd_fmm.on_the_fly_fmm(px, py, tau, N_equiv, N_cutoff, \
                     kernel_functions, numba_functions_otf, verbose=True)
 time_fmm_eval = (time.time() - st)*1000
 if reference:
     err = np.abs(fmm_eval - reference_eval)
     print('\nMaximum difference:            {:0.2e}'.format(err.max()))
 
-# plan fmm
-st = time.time()
-fmm_plan = pykifmm2d.fmm.fmm_planner(px, py, N_equiv, N_cutoff, kernel_functions, numba_functions_plan, verbose=True)
-planning_time = (time.time()-st)*1000
-# execute fmm
-st = time.time()
-fmm_eval = pykifmm2d.fmm.planned_fmm(fmm_plan, tau)
-time_fmm_eval = (time.time() - st)*1000
-err = np.abs(fmm_eval - reference_eval)
+if False:
+    # plan fmm
+    st = time.time()
+    fmm_plan = pykifmm2d.fmm.fmm_planner(px, py, N_equiv, N_cutoff, kernel_functions, numba_functions_plan, verbose=True)
+    planning_time = (time.time()-st)*1000
+    # execute fmm
+    st = time.time()
+    fmm_eval = pykifmm2d.fmm.planned_fmm(fmm_plan, tau)
+    time_fmm_eval = (time.time() - st)*1000
+    err = np.abs(fmm_eval - reference_eval)
 
-print('\nFMM planning took:               {:0.1f}'.format(planning_time))
-print('FMM evaluation took:             {:0.1f}'.format(time_fmm_eval))
-print('Maximum difference:              {:0.2e}'.format(err.max()))
+    print('\nFMM planning took:               {:0.1f}'.format(planning_time))
+    print('FMM evaluation took:             {:0.1f}'.format(time_fmm_eval))
+    print('Maximum difference:              {:0.2e}'.format(err.max()))
 
 
 
+
+import line_profiler
+%load_ext line_profiler
+from pykifmm2d.svd_fmm import _on_the_fly_fmm
+
+%lprun -f _on_the_fly_fmm pykifmm2d.svd_fmm.on_the_fly_fmm(px, py, tau, N_equiv, N_cutoff, \
+                    kernel_functions, numba_functions_otf, verbose=True)
 
