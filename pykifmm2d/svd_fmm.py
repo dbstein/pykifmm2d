@@ -390,12 +390,18 @@ def _on_the_fly_fmm(tree, tau, Nequiv, kernel_functions, numba_functions, verbos
         descendant_level.Local_Solutions[:] = local_solutions.reshape(descendant_level.Local_Solutions.shape)
         # compute all possible interactions
         CM2Lh = CM2LS[ind+1]
-        ci4 = (Level.children_ind/4).astype(int)
+        ci4 = Level.children_ind/4
+        ci4[ci4 < 0] = -1
+        ci4 = ci4.astype(int)
         for kkx in range(3):
             for kky in range(3):
                 if not (kkx-1 == 0 and kky-1 == 0):
+                    needed = np.zeros(np.sum(doit), dtype=bool)
+                    needed_interaction(doit, ci4, Level.colleagues, Level.xmid, Level.ymid, kkx-1, kky-1, needed)
+                    # print(needed.sum(), '/', needed.shape[0])
                     M2M = CM2Lh[kkx, kky].dot(descendant_level.RSEQD.T).T
                     numba_add_interactions(doit, ci4, Level.colleagues, Level.xmid, Level.ymid, descendant_level.Local_Solutions, M2M, Nequiv, kkx-1, kky-1)
+
     et = time.time()
     my_print('....Time for downwards pass 1: {:0.2f}'.format(1000*(et-st)))
     # downwards pass 2 - start at top and evaluate local expansions
@@ -403,6 +409,7 @@ def _on_the_fly_fmm(tree, tau, Nequiv, kernel_functions, numba_functions, verbos
     for ind in range(1,tree.levels):
         Level = tree.Levels[ind]
         local_expansions = fft_solve(E2C_Vs[ind], Level.Local_Solutions.T).T
+        Level.local_expansions = local_expansions
         numba_downwards_pass2(tree.x, tree.y, Level.bot_ind, Level.top_ind, Level.ns, Level.leaf, large_xs[ind], large_ys[ind], Level.xmid, Level.ymid, local_expansions, solution_ordered)
     et = time.time()
     my_print('....Time for downwards pass 2: {:0.2f}'.format(1000*(et-st)))
@@ -419,6 +426,36 @@ def _on_the_fly_fmm(tree, tau, Nequiv, kernel_functions, numba_functions, verbos
     ordered_solution = solution_ordered[desorter]
     return ordered_solution
 
+def evaluate_at(tree, x, y):
+    """
+    Evaluate expansion, stored in tree, at the point(x, y) in O(1) time...
+    """
+    okx = x > tree.xmin and x <= tree.xmax
+    oky = y > tree.ymin and y <= tree.ymax
+    ok = okx and oky
+    if not ok:
+        raise Exception('Given point not in tree range.')
+    descend = True
+    while descend:
+        ind = numba_locate()
+
+
+
+@numba.njit("(b1[:],i8[:],i8[:,:],f8[:],f8[:],i8,i8,b1[:])", parallel=True, cache=cacheit)
+def needed_interaction(doit, ci4, colleagues, xmid, ymid, xdi, ydi, needed):
+    n = doit.shape[0]
+    for i in numba.prange(n):
+        if doit[i]:
+            dii = ci4[i]
+            for j in range(9):
+                ci = colleagues[i,j]
+                if ci >= 0 and ci != i:
+                    xdist = int(np.sign(xmid[ci]-xmid[i]))
+                    ydist = int(np.sign(ymid[ci]-ymid[i]))
+                    if xdist == xdi and ydist == ydi:
+                        di = ci4[ci]
+                        needed[di] = True
+
 @numba.njit("(b1[:],i8[:],i8[:,:],f8[:],f8[:],f8[:,:],f8[:,:],i8,i8,i8)", parallel=True, cache=cacheit)
 def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M2Ms, Nequiv, xdi, ydi):
     n = doit.shape[0]
@@ -432,9 +469,10 @@ def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M
                     ydist = int(np.sign(ymid[ci]-ymid[i]))
                     if xdist == xdi and ydist == ydi:
                         di = ci4[ci]
-                        for k in range(4):
-                            for ll in range(Local_Solutions.shape[1]):
-                                Local_Solutions[4*dii+k, ll] += M2Ms[di,k*Nequiv+ll]
+                        if di >= 0:
+                            for k in range(4):
+                                for ll in range(Local_Solutions.shape[1]):
+                                    Local_Solutions[4*dii+k, ll] += M2Ms[di,k*Nequiv+ll]
 
 
 
@@ -827,5 +865,22 @@ def planned_fmm(fmm_plan, tau):
     # deorder the solution
     desorter = np.argsort(tree.ordv)
     return solution_ordered[desorter]
+
+
+
+
+################################################################################
+# Function to create fast evaluator for any given function
+# Hopefully we can get this to inline...
+
+def generate_fast_evaluator(func, a, b):
+    """
+    Generate a fast, numba-based function for use in pykifmm2d
+    """
+
+
+
+
+
 
 
