@@ -398,17 +398,15 @@ class Level(object):
         numba_get_Xlist(self.depths, self.colleagues, self.leaf, self.Xlist)
     def add_null_Xlist(self):
         self.Xlist = np.zeros(self.n_node, dtype=bool)
-    def allocate_workspace(self, Nequiv):
-        self.Local_Solutions = np.zeros([self.n_node, Nequiv], dtype=float)
-        self.Check_Us = np.zeros([self.n_node, Nequiv], dtype=float)
-        self.Equiv_Densities = np.zeros([self.n_node, Nequiv], dtype=float)
+    def allocate_workspace(self, Nequiv, dtype=float):
+        self.Local_Solutions = np.zeros([self.n_node, Nequiv], dtype=dtype)
+        self.Check_Us = np.zeros([self.n_node, Nequiv], dtype=dtype)
+        self.Equiv_Densities = np.zeros([self.n_node, Nequiv], dtype=dtype)
         resh = (int(self.n_node/4), int(Nequiv*4))
         self.resh = resh
         self.RSEQD = np.reshape(self.Equiv_Densities, resh)
         if self.RSEQD.flags.owndata:
             raise Exception('Something went wrong with reshaping the equivalent densities, it made a copy instead of a view.')
-    def add_and_reorder_targets(self, tx, ty):
-        pass
 
 @numba.njit("(i8[:],b1[:],i8[:],i8[:])", parallel=True, cache=cacheit)
 def numba_get_depths(depths, leaves, children_ind, descendant_depths):
@@ -451,14 +449,13 @@ class Tree(object):
     """
     Quadtree object for use in computing FMMs
     """
-    def __init__(self, x, y, ppl, tx=None, ty=None):
+    def __init__(self, x, y, ppl, bbox=None):
         """
         Inputs:
             x,   f8[:], x coordinates for which tree will be constructed
             y,   f8[:], y coordinates for which tree will be constructed
             ppl, i8,    cutoff value that triggers leaf refinement
-            tx,  f8[:], x coordinates of targets, optional
-            ty,  f8[:], y coordinates of targets, optional
+            bbox, f8[4], [xmin, xmax, ymin, ymax] for eval bbox
         """
         self.x = x.copy()
         self.y = y.copy()
@@ -475,41 +472,12 @@ class Tree(object):
         self.ymax = mmax
         self.N = self.x.shape[0]
         self.workspace_allocated = False
-        # check on targets
-        if tx is None or ty is None:
-            self.full_xmin = self.xmin
-            self.full_xmax = self.xmax
-            self.full_ymin = self.ymin
-            self.full_ymax = self.ymax
-            self.targets = False
-            self.n_targ = 0
-        else:
-            self.tx = tx.copy()
-            self.ty = ty.copy()
-            txmin = self.tx.min()
-            txmax = self.tx.max()
-            tymin = self.ty.min()
-            tymax = self.ty.min()
-            tmin = int(np.floor(np.min([txmin, tymin])))
-            tmax = int(np.ceil (np.max([txmax, tymax])))
-            self.txmin = tmin
-            self.txmax = tmax
-            self.tymin = tmin
-            self.tymax = tmax
-            rmin = min(mmin, tmin)
-            rmax = max(mmax, tmax)
-            self.full_xmin = min(self.xmin, self.txmin)
-            self.full_xmax = max(self.xmax, self.txmax)
-            self.full_ymin = min(self.ymin, self.tymin)
-            self.full_ymax = max(self.ymax, self.tymax)
-            self.targets = True
-            self.n_targ = self.tx.shape[0]
         # vector to allow reordering of density tau
         self.ordv = np.arange(self.N)
         self.Levels = []
         # setup the first level
-        xminarr = np.array((self.full_xmin,))
-        yminarr = np.array((self.full_ymin,))
+        xminarr = np.array((self.xmin,))
+        yminarr = np.array((self.ymin,))
         width = self.xmax-self.xmin
         bot_ind_arr = np.array((0,))
         top_ind_arr = np.array((self.N,))
@@ -535,12 +503,11 @@ class Tree(object):
         self.split_Xlist()
         # get not leaves
         self.get_not_leaves()
-        # divide targets
-        if self.targets:
-            self.divide_targets()
-    def divide_targets(self):
-        for ind, Level in enumerate(self.Levels):
-            Level.add_and_reorder_targets(self.tx, self.ty)
+        # get aggregated information
+        self.leafs = [Level.leaf for Level in self.Levels]
+        self.xmids = [Level.xmid for Level in self.Levels]
+        self.ymids = [Level.xmid for Level in self.Levels]
+        self.children_inds = [Level.children_ind for Level in self.Levels]
     def tag_colleagues(self):
         """
         Tag colleagues (neighbors at same level) for every node in tree
@@ -586,9 +553,9 @@ class Tree(object):
         for ind, Level in reversed(list(enumerate(self.Levels))):
             descendant = None if ind==self.levels-1 else self.Levels[ind+1]
             Level.get_depths(descendant)
-    def allocate_workspace(self, Nequiv):
+    def allocate_workspace(self, Nequiv, dtype=float):
         for Level in self.Levels[1:]:
-            Level.allocate_workspace(Nequiv)
+            Level.allocate_workspace(Nequiv, dtype)
         self.workspace_allocated = True
 
 
@@ -683,5 +650,59 @@ class Tree(object):
         """
         for ind, Level in enumerate(self.Levels):
             print('Level', ind+1, 'of', self.levels, 'has', Level.n_node, 'nodes.')
+    def check_bounding_box(self, x, y):
+        ok1 = np.all(x < self.xmin)
+        ok2 = np.all(x > self.xmax)
+        ok3 = np.all(y < self.ymin)
+        ok4 = np.all(y > self.ymax)
+        return ok1 and ok2 and ok3 and ok4
+    def locate_point(self, x, y):
+        """
+        Given a point x, y in the bounding box of the tree
+        Find 
+        """
+        self.check_bounding_box(x, y)
+        ind = 0
+        loc = 0
+        Level = self.Levels[ind]
+        while not Level.leaf[loc]:
+            child_loc = Level.children_ind[loc]
+            if x > Level.xmid[loc]: child_loc += 2
+            if y > Level.ymid[loc]: child_loc += 1
+            loc = child_loc
+            ind += 1
+            Level = self.Levels[ind]
+        return ind, loc
+    def locate_points(self, x, y):
+        x = x.ravel()
+        y = y.ravel()
+        self.check_bounding_box(x, y)
+        inds = np.zeros(x.size, dtype=int)
+        locs = np.zeros(x.size, dtype=int)
+        numba_locate_points(x, y, self.leafs, self.xmids, self.ymids, self.children_inds, inds, locs)
+        return inds, locs
+
+
+@numba.njit(parallel=True)
+def numba_locate_points(tx, ty, leafs, xmids, ymids, cinds, inds, locs):
+    n = tx.size
+    for i in numba.prange(n):
+        x = tx[i]
+        y = ty[i]
+        ind = 0
+        loc = 0
+        while not leafs[ind][loc]:
+            cloc = cinds[ind][loc]
+            if x > xmids[ind][loc]: cloc += 2
+            if y > ymids[ind][loc]: cloc += 1
+            loc = cloc
+            ind += 1
+        inds[i] = ind
+        locs[i] = loc
+
+
+
+
+
 
 

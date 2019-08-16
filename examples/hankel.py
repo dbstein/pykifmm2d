@@ -1,5 +1,5 @@
 import pykifmm2d
-import pykifmm2d.svd_fmm
+import pykifmm2d.complex_fmm as fmm
 import numpy as np
 import numba
 import time
@@ -7,14 +7,13 @@ import matplotlib as mpl
 # mpl.use('TkAgg')
 import matplotlib.pyplot as plt
 plt.ion()
-from pykifmm2d.misc.numba_special_functions import _numba_k0
 
 from fast_interp import chebyshev_function_generator
 CFG = chebyshev_function_generator.ChebyshevFunctionGenerator
 
-from scipy.special import k0 as sk0
-_k0 = CFG(sk0, 1e-10, 10, tol=1e-14, n=32, verbose=False)
-k0 = _k0.get_base_function()
+from scipy.special import hankel1
+_h0 = CFG(lambda x: hankel1(0, x), 1e-10, 200, tol=1e-14, n=32, verbose=False)
+h0 = _h0.get_base_function()
 
 """
 Demonstration of the FMM for the Laplace Kernel
@@ -30,27 +29,26 @@ And gives error <5e-14
 """
 
 random2 = pykifmm2d.utils.random2
-Prepare_Functions_OTF  = pykifmm2d.fmm.prepare_numba_functions_on_the_fly
-Prepare_Functions_PLAN = pykifmm2d.fmm.prepare_numba_functions_planned
-Prepare_K_Functions    = pykifmm2d.fmm.Get_Kernel_Functions
-helmholtz_k = 1.0
+Prepare_Functions_OTF  = fmm.prepare_numba_functions_on_the_fly
+Prepare_K_Functions    = fmm.Get_Kernel_Functions
+helmholtz_k = 2.0
 
-scaleit = 1.0 / (2*np.pi)
+scaleit = 0.25j
 # Modified Helmholtz Kernel
-@numba.njit("f8(f8,f8,f8,f8)", fastmath=True)
+@numba.njit(fastmath=True)
 def MH_Eval(sx, sy, tx, ty):
     # return _numba_k0(helmholtz_k*np.sqrt((tx-sx)**2 + (ty-sy)**2))*scaleit
-    return k0(helmholtz_k*np.sqrt((tx-sx)**2 + (ty-sy)**2))*scaleit
+    return h0(helmholtz_k*np.sqrt((tx-sx)**2 + (ty-sy)**2))*scaleit
 
 # associated kernel evaluation functions
 kernel_functions = Prepare_K_Functions(MH_Eval)
 (KF, KA, KAS) = kernel_functions
 # jit compile internal numba functions
 numba_functions_otf  = Prepare_Functions_OTF (MH_Eval)
-numba_functions_plan = Prepare_Functions_PLAN(MH_Eval)
+# numba_functions_plan = Prepare_Functions_PLAN(MH_Eval)
 
 N_total = 1000*100
-test = 'circle' # clustered or circle or uniform
+test = 'uniform' # clustered or circle or uniform
 
 # construct some data to run FMM on
 if test == 'uniform':
@@ -76,23 +74,24 @@ else:
     raise Exception('Test is not defined')
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 200
+N_cutoff = 50
 # number of points used in Check/Equivalent Surfaces
 N_equiv = 48
 
 # get random density
-tau = np.random.rand(N_total)/N_total
+tau = (np.random.rand(N_total) + 1j*np.random.rand(N_total))/N_total
+tau = tau.astype(complex)
 
 print('\nModified Helmholtz Kernel Direct vs. FMM demonstration with', N_total, 'points.')
 
 # get reference solution
 reference = True
 if reference:
-    # if N_total <= 50000:
-    if False:
+    if N_total <= 50000:
+    # if False:
         # by Direct Sum
         st = time.time()
-        reference_eval = np.zeros(N_total, dtype=float)
+        reference_eval = np.zeros(N_total, dtype=complex)
         KAS(px, py, tau, out=reference_eval)
         time_direct_eval = (time.time() - st)*1000
         print('\nDirect evaluation took:        {:0.1f}'.format(time_direct_eval))
@@ -102,29 +101,46 @@ if reference:
             import pyfmmlib2d
             source = np.row_stack([px, py])
             st = time.time()
-            out = pyfmmlib2d.HFMM(source, charge=tau, compute_source_potential=True, helmholtz_parameter=1j*helmholtz_k)
+            out = pyfmmlib2d.HFMM(source, charge=tau, compute_source_potential=True, helmholtz_parameter=helmholtz_k)
             et = time.time()
             time_fmmlib_eval = (et-st)*1000
-            reference_eval = out['source']['u'].real
-            print('FMMLIB evaluation took:        {:0.1f}'.format(time_fmmlib_eval))
+            reference_eval = out['source']['u']
+            print('FMMLIB evaluation took:         {:0.1f}'.format(time_fmmlib_eval))
         except:
             print('')
             reference = False
 
-# do my FMM
+# do my FMM (once first, to compile functions...)
+FMM = fmm.FMM(px, py, kernel_functions, numba_functions_otf, N_equiv, N_cutoff, True)
+FMM.precompute()
+FMM.build_expansions(tau)
+fmm_eval = FMM.evaluate_to_sources()
+
 st = time.time()
-fmm_eval, tree = pykifmm2d.svd_fmm.on_the_fly_fmm(px, py, tau, N_equiv, N_cutoff, \
-                    kernel_functions, numba_functions_otf, verbose=True)
+print('')
+FMM = fmm.FMM(px, py, kernel_functions, numba_functions_otf, N_equiv, N_cutoff, True, True)
+FMM.precompute()
+FMM.build_expansions(tau)
+fmm_eval = FMM.evaluate_to_sources()
 time_fmm_eval = (time.time() - st)*1000
+print('pyfmmlib2d evaluation took:     {:0.1f}'.format(time_fmm_eval))
 if reference:
     err = np.abs(fmm_eval - reference_eval)
     print('\nMaximum difference:            {:0.2e}'.format(err.max()))
 
+# test at some random point
+rx = np.random.rand(1)[0]
+ry = np.random.rand(1)[0]
+o1 = FMM.evaluate_to_point(rx, ry)
+o2 = np.array([0j,])
+KA(px, py, np.array([rx,]), np.array([ry,]), tau, out=o2)
+print('Difference in test point is {:0.2e}'.format(np.abs(o1-o2).max()))
 
+rx = np.random.rand(100000)
+ry = np.random.rand(100000)
+o1 = FMM.evaluate_to_points(rx, ry)
 
-
-
-if True:
+if False:
     # plan fmm
     st = time.time()
     fmm_plan = pykifmm2d.fmm.fmm_planner(px, py, N_equiv, N_cutoff, kernel_functions, numba_functions_plan, verbose=True)
@@ -138,3 +154,5 @@ if True:
     print('\nFMM planning took:               {:0.1f}'.format(planning_time))
     print('FMM evaluation took:             {:0.1f}'.format(time_fmm_eval))
     print('Maximum difference:              {:0.2e}'.format(err.max()))
+
+
