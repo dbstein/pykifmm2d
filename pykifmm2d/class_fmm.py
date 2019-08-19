@@ -128,7 +128,7 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
                 pot[i] += Kernel_Eval(large_x[ks], large_y[ks], tx, ty)*expansion[ks]
 
     @numba.njit(parallel=True, fastmath=True)
-    def numba_target_neighbor_evaluation(tx, ty, sx, sy, inds, locs, bot_inds, top_inds, colleagues, tau_ordered, pot):
+    def numba_target_neighbor_evaluation(tx, ty, sx, sy, inds, locs, bot_inds, top_inds, colleagues, tau_ordered, pot, check):
         n = tx.size
         for i in numba.prange(n):
             x = tx[i]
@@ -142,7 +142,11 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
                     bind = bot_inds[ind][ci]
                     tind = top_inds[ind][ci]
                     ns = tind - bind
-                    if ns > 0:
+                    if ns > 0 and check:
+                        for ks in range(bind, bind+ns):
+                            if not (x - sx[ks] == 0 and y - sy[ks] == 0):
+                                pot[i] += Kernel_Eval(sx[ks], sy[ks], x, y)*tau_ordered[ks]
+                    if ns > 0 and not check:
                         for ks in range(bind, bind+ns):
                             pot[i] += Kernel_Eval(sx[ks], sy[ks], x, y)*tau_ordered[ks]
 
@@ -458,7 +462,7 @@ class FMM(object):
                     KA(tree.x[bind:tind], tree.y[bind:tind], np.array([x,]), np.array([y,]), tau_ordered[bind:tind], cpot)
                     pot += cpot
         return pot
-    def evaluate_to_points(self, x,  y):
+    def evaluate_to_points(self, x,  y, check_self=False):
         tree, E2C_LUs, M2MC, M2LS, CM2LS, small_xs, small_ys, large_xs, large_ys, small_radii, large_radii, widths = self._get_names()
         (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2, numba_target_local_expansion_evaluation, \
             numba_target_neighbor_evaluation) = self.numba_functions
@@ -474,7 +478,10 @@ class FMM(object):
         colleagues = [Level.colleagues for Level in tree.Levels]
         numba_target_local_expansion_evaluation(x, y, inds, locs, large_xs, large_ys, tree.xmids, tree.ymids, Local_Expansions, pot)
         # evaluate interactions from neighbor cells to (x, y)
-        numba_target_neighbor_evaluation(x, y, tree.x, tree.y, inds, locs, bot_inds, top_inds, colleagues, tau_ordered, pot)
+        if check_self:
+            numba_target_neighbor_evaluation(x, y, tree.x, tree.y, inds, locs, bot_inds, top_inds, colleagues, tau_ordered, pot, True)
+        else:
+            numba_target_neighbor_evaluation(x, y, tree.x, tree.y, inds, locs, bot_inds, top_inds, colleagues, tau_ordered, pot, False)
         return pot
     def _get_names(self):
         return self.tree, self.E2C_LUs, self.M2MC, self.M2LS, self.CM2LS, self.small_xs, self.small_ys, \
