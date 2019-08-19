@@ -60,12 +60,6 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
                 tind1 = topind[i]
                 nt = tind1 - bind1 # number of targets in this leaf
                 if nt > 0:
-                    tx = np.empty(nt)
-                    ty = np.empty(nt)
-                    soli = np.zeros(nt, dtype=np.complex128)
-                    for ll in range(nt):
-                        tx[ll] = x[bind1 + ll]
-                        ty[ll] = y[bind1 + ll]
                     # loop through all 9 possible colleagues
                     for j in range(9):
                         ci = colleagues[i,j]
@@ -75,19 +69,10 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
                             ns = tind2 - bind2
                             # number of source points in colleague
                             if ns > 0:
-                                sx = np.empty(ns)
-                                sy = np.empty(ns)
-                                taui = np.empty(ns, dtype=np.complex128)
-                                for ll in range(ns):
-                                    sx[ll] = x[bind2 + ll]
-                                    sy[ll] = y[bind2 + ll]
-                                    taui[ll] = tau[bind2 + ll]
-                                for ks in range(ns):
-                                    for kt in range(nt):
-                                        if i != ci or ks != kt:
-                                            soli[kt] += taui[ks]*Kernel_Eval(sx[ks], sy[ks], tx[kt], ty[kt])
-                    for kt in range(nt):
-                        sol[kt + bind1] += soli[kt]
+                                for ks in range(bind2, bind2+ns):
+                                    for kt in range(bind1, bind1+nt):
+                                        if ks != kt:
+                                            sol[kt] += tau[ks]*Kernel_Eval(x[ks], y[ks], x[kt], y[kt])
 
     @numba.njit(parallel=True, fastmath=True)
     def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
@@ -98,19 +83,12 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
                 bi = botind[i]
                 ti = topind[i]
                 ni = ti-bi
-                sx = np.empty(ni)
-                sy = np.empty(ni)
-                taus = np.empty(ni, dtype=np.complex128)
                 uch = np.zeros(ne, dtype=np.complex128)
-                for ll in range(ni):
-                    sx[ll] = x[bi+ll]
-                    sy[ll] = y[bi+ll]
-                    taus[ll] = tau[bi+ll]
                 tx = xtarg + xmid[i]
                 ty = ytarg + ymid[i]
-                for ks in range(ni):
+                for ks in range(bi, bi+ni):
                     for kt in range(ne):
-                        uch[kt] += Kernel_Eval(sx[ks], sy[ks], tx[kt], ty[kt])*taus[ks]
+                        uch[kt] += Kernel_Eval(x[ks], y[ks], tx[kt], ty[kt])*tau[ks]
                 for kt in range(ne):
                     ucheck[i,kt] += uch[kt]
 
@@ -118,11 +96,6 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
     def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
         n = botind.shape[0]
         ne = xsrc.shape[0]
-        sx = np.empty(ne)
-        sy = np.empty(ne)
-        for ll in range(ne):
-            sx[ll] = xsrc[ll]
-            sy[ll] = ysrc[ll]
         for i in numba.prange(n):
             if leaf[i] and (ns[i] > 0):
                 bi = botind[i]
@@ -133,62 +106,47 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
                 loci = np.empty(ne, dtype=np.complex128)
                 for ll in range(ne):
                     loci[ll] = local_expansions[i, ll]
-                soli = np.zeros(ni, dtype=np.complex128)
                 for ks in range(ne):
                     for kt in range(ni):
-                        soli[kt] += Kernel_Eval(sx[ks], sy[ks], tx[kt], ty[kt])*loci[ks]
-                for kt in range(ni):
-                    sol[kt+bi] += soli[kt]
+                        sol[bi+kt] += Kernel_Eval(xsrc[ks], ysrc[ks], tx[kt], ty[kt])*loci[ks]
 
     @numba.njit(parallel=True, fastmath=True)
-    def numba_target_local_expansion_evaluation(xs, ys, inds, locs, large_xs, large_ys, tree.xmids, tree.ymids, Local_Expansions):
-        n = x.size
+    def numba_target_local_expansion_evaluation(xs, ys, inds, locs, large_xs, large_ys, xmids, ymids, Local_Expansions, pot):
+        n = xs.size
         for i in numba.prange(n):
             x = xs[i]
             y = ys[i]
             ind = inds[i]
             loc = locs[i]
-            tx = x
+            tx = x - xmids[ind][loc]
+            ty = y - ymids[ind][loc]
+            large_x = large_xs[ind]
+            large_y = large_ys[ind]
+            expansion = Local_Expansions[ind-1][loc] # ind-1 since the 0 one has no local expansions!
+            pot[i] = 0.0
+            for ks in range(large_x.size):
+                pot[i] += Kernel_Eval(large_x[ks], large_y[ks], tx, ty)*expansion[ks]
 
-            if leaf[i] and (ns[i] > 0):
-                bi = botind[i]
-                ti = topind[i]
-                ni = ti-bi
-                tx = x[bi:ti] - xmid[i]
-                ty = y[bi:ti] - ymid[i]
-                loci = np.empty(ne, dtype=np.complex128)
-                for ll in range(ne):
-                    loci[ll] = local_expansions[i, ll]
-                soli = np.zeros(ni, dtype=np.complex128)
-                for ks in range(ne):
-                    for kt in range(ni):
-                        soli[kt] += Kernel_Eval(sx[ks], sy[ks], tx[kt], ty[kt])*loci[ks]
-                for kt in range(ni):
-                    sol[kt+bi] += soli[kt]
+    @numba.njit(parallel=True, fastmath=True)
+    def numba_target_neighbor_evaluation(tx, ty, sx, sy, inds, locs, bot_inds, top_inds, colleagues, tau_ordered, pot):
+        n = tx.size
+        for i in numba.prange(n):
+            x = tx[i]
+            y = ty[i]
+            ind = inds[i]
+            loc = locs[i]
+            cols = colleagues[ind][loc]
+            for j in range(9):
+                ci = cols[j]
+                if ci >= 0:
+                    bind = bot_inds[ind][ci]
+                    tind = top_inds[ind][ci]
+                    ns = tind - bind
+                    if ns > 0:
+                        for ks in range(bind, bind+ns):
+                            pot[i] += Kernel_Eval(sx[ks], sy[ks], x, y)*tau_ordered[ks]
 
-        # evaluate appropriate local expansion at (x, y)
-        local_expansion = Level.Local_Expansions[loc]
-        tx = np.array([x - Level.xmid[loc],])
-        ty = np.array([y - Level.ymid[loc],])
-        pot = np.array([0.0j,])
-        KA(large_xs[ind], large_ys[ind], tx, ty, local_expansion, pot)
-        # evaluate interactions from neighbor cells to (x, y)
-        colleagues = Level.colleagues[loc]
-        for i in range(9):
-            ci = colleagues[i]
-            if ci >= 0:
-                bind = Level.bot_ind[ci]
-                tind = Level.top_ind[ci]
-                ns = tind - bind
-                if ns > 0:
-                    cpot = np.array([0.0j,])
-                    KA(tree.x[bind:tind], tree.y[bind:tind], np.array([x,]), np.array([y,]), tau_ordered[bind:tind], cpot)
-                    pot += cpot
-
-
-
-
-    return evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2
+    return evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2, numba_target_local_expansion_evaluation, numba_target_neighbor_evaluation
 
 def Get_Kernel_Functions(Kernel_Eval):
     @numba.njit(parallel=True, fastmath=True)
@@ -396,8 +354,8 @@ class FMM(object):
         self.print('....Time for precomputations:   {:0.2f}'.format(1000*(et-st)))
     def build_expansions(self, tau):
         tree, E2C_LUs, M2MC, M2LS, CM2LS, small_xs, small_ys, large_xs, large_ys, small_radii, large_radii, widths = self._get_names()
-        (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2) \
-            = self.numba_functions
+        (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2, numba_target_local_expansion_evaluation, \
+            numba_target_neighbor_evaluation) = self.numba_functions
         Nequiv, Ncutoff = self.Nequiv, self.Ncutoff
         tau_ordered = tau[tree.ordv]
         self.tau = tau
@@ -451,8 +409,8 @@ class FMM(object):
         self.print('....Time for downwards pass 2a: {:0.2f}'.format(1000*(et-st)))
     def evaluate_to_sources(self):
         tree, E2C_LUs, M2MC, M2LS, CM2LS, small_xs, small_ys, large_xs, large_ys, small_radii, large_radii, widths = self._get_names()
-        (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2) \
-            = self.numba_functions
+        (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2, numba_target_local_expansion_evaluation, \
+            numba_target_neighbor_evaluation) = self.numba_functions
         if not hasattr(self, 'tau'):
             raise Exception('Need to call build_expansions first')
         if not hasattr(self, 'desorter'):
@@ -502,15 +460,22 @@ class FMM(object):
         return pot
     def evaluate_to_points(self, x,  y):
         tree, E2C_LUs, M2MC, M2LS, CM2LS, small_xs, small_ys, large_xs, large_ys, small_radii, large_radii, widths = self._get_names()
+        (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2, numba_target_local_expansion_evaluation, \
+            numba_target_neighbor_evaluation) = self.numba_functions
         KF, KA, KAS = self.kernel_functions
         tau_ordered = self.tau_ordered
         # get level ind, level loc for the point (x, y)
         inds, locs = tree.locate_points(x, y)
         # evaluate local expansions
         pot = np.zeros(x.size, dtype=self.dtype)
-        Local_Expansions = [Level.Local_Expansions for Level in tree.Levels]
-        numba_target_local_expansion_evaluation(x, y, inds, locs, large_xs, large_ys, tree.xmids, tree.ymids, Local_Expansions)
-        return inds, locs
+        Local_Expansions = [Level.Local_Expansions for Level in tree.Levels if hasattr(Level, 'Local_Expansions')]
+        bot_inds = [Level.bot_ind for Level in tree.Levels]
+        top_inds = [Level.top_ind for Level in tree.Levels]
+        colleagues = [Level.colleagues for Level in tree.Levels]
+        numba_target_local_expansion_evaluation(x, y, inds, locs, large_xs, large_ys, tree.xmids, tree.ymids, Local_Expansions, pot)
+        # evaluate interactions from neighbor cells to (x, y)
+        numba_target_neighbor_evaluation(x, y, tree.x, tree.y, inds, locs, bot_inds, top_inds, colleagues, tau_ordered, pot)
+        return pot
     def _get_names(self):
         return self.tree, self.E2C_LUs, self.M2MC, self.M2LS, self.CM2LS, self.small_xs, self.small_ys, \
             self.large_xs, self.large_ys, self.small_radii, self.large_radii, self.widths

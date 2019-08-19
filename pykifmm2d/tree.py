@@ -506,7 +506,7 @@ class Tree(object):
         # get aggregated information
         self.leafs = [Level.leaf for Level in self.Levels]
         self.xmids = [Level.xmid for Level in self.Levels]
-        self.ymids = [Level.xmid for Level in self.Levels]
+        self.ymids = [Level.ymid for Level in self.Levels]
         self.children_inds = [Level.children_ind for Level in self.Levels]
     def tag_colleagues(self):
         """
@@ -680,10 +680,9 @@ class Tree(object):
         inds = np.zeros(x.size, dtype=int)
         locs = np.zeros(x.size, dtype=int)
         numba_locate_points(x, y, self.leafs, self.xmids, self.ymids, self.children_inds, inds, locs)
-        return inds, locs
+        return inds.reshape(x.shape), locs.reshape(x.shape)
 
-
-@numba.njit(parallel=True)
+@numba.njit(parallel=True, fastmath=True)
 def numba_locate_points(tx, ty, leafs, xmids, ymids, cinds, inds, locs):
     n = tx.size
     for i in numba.prange(n):
