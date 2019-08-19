@@ -41,8 +41,8 @@ kernel_functions = Prepare_K_Functions(MH_Eval)
 numba_functions_otf  = Prepare_Functions_OTF (MH_Eval)
 # numba_functions_plan = Prepare_Functions_PLAN(MH_Eval)
 
-N_source = 1000*10
-N_target = 1000*1000
+N_source = 1000*20
+N_target = 1000*20
 test = 'circle' # clustered or circle or uniform
 
 # construct some data to run FMM on
@@ -88,7 +88,7 @@ print('\nHelmholtz FMM with', N_source, 'source pts and', N_target, 'target pts.
 # get reference solution
 reference = True
 if reference:
-    if N_source*N_target <= 50000**2:
+    if N_source*N_target <= 10000**2:
         # by Direct Sum
         st = time.time()
         self_reference_eval = np.zeros(N_source, dtype=complex)
