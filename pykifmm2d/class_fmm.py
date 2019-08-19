@@ -29,7 +29,7 @@ def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M
                     for k in range(4):
                         for ll in range(Local_Solutions.shape[1]):
                             Local_Solutions[4*dii+k, ll] += \
-                                M2Ms[xdist+1,ydist+1,di,k*Nequiv+ll]
+                                M2Ms[xdist+1,ydist+1,k*Nequiv+ll,di]
 
 def get_level_information(node_width, theta):
     # get information for this level
@@ -49,6 +49,8 @@ def get_print_function(verbose):
     return print if verbose else fake_print
 
 def prepare_numba_functions_on_the_fly(Kernel_Eval):
+
+    # this isn't really used anymore!!!
     @numba.njit(parallel=True, fastmath=True)
     def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
         n = botind.shape[0]
@@ -83,14 +85,11 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
                 bi = botind[i]
                 ti = topind[i]
                 ni = ti-bi
-                uch = np.zeros(ne, dtype=np.complex128)
                 tx = xtarg + xmid[i]
                 ty = ytarg + ymid[i]
                 for ks in range(bi, bi+ni):
                     for kt in range(ne):
-                        uch[kt] += Kernel_Eval(x[ks], y[ks], tx[kt], ty[kt])*tau[ks]
-                for kt in range(ne):
-                    ucheck[i,kt] += uch[kt]
+                        ucheck[i,kt] += Kernel_Eval(x[ks], y[ks], tx[kt], ty[kt])*tau[ks]
 
     @numba.njit(parallel=True, fastmath=True)
     def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
@@ -103,12 +102,9 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
                 ni = ti-bi
                 tx = x[bi:ti] - xmid[i]
                 ty = y[bi:ti] - ymid[i]
-                loci = np.empty(ne, dtype=np.complex128)
-                for ll in range(ne):
-                    loci[ll] = local_expansions[i, ll]
                 for ks in range(ne):
                     for kt in range(ni):
-                        sol[bi+kt] += Kernel_Eval(xsrc[ks], ysrc[ks], tx[kt], ty[kt])*loci[ks]
+                        sol[bi+kt] += Kernel_Eval(xsrc[ks], ysrc[ks], tx[kt], ty[kt])*local_expansions[i,ks]
 
     @numba.njit(parallel=True, fastmath=True)
     def numba_target_local_expansion_evaluation(xs, ys, inds, locs, large_xs, large_ys, xmids, ymids, Local_Expansions, pot):
@@ -197,30 +193,10 @@ def Kernel_Form(KF, sx, sy, tx=None, ty=None, out=None):
     ns = sx.shape[0]
     nt = tx.shape[0]
     if out is None:
-        out = np.empty((nt, ns), dtype=complex)
+        out = np.empty((nt, ns), dtype=float)
     KF(sx, sy, tx, ty, out)
     if isself:
         np.fill_diagonal(out, 0.0)
-    return out
-
-def Kernel_Apply(KA, KAS, sx, sy, tau, tx=None, ty=None, out=None):
-    if tx is None or ty is None:
-        tx = sx
-        ty = sy
-        isself = True
-    else:
-        if sx is tx and sy is ty:
-            isself = True
-        else:
-            isself = False
-    ns = sx.shape[0]
-    nt = tx.shape[0]
-    if out is None:
-        out = np.empty(nt, complex)
-    if isself:
-        KAS(sx, sy, tau, out)
-    else:
-        KA(sx, sy, tx, ty, tau, out)
     return out
 
 class FMM(object):
@@ -394,12 +370,12 @@ class FMM(object):
             # now we have not leaves in the descendant_level.Local_Solutions...
             descendant_level.Local_Solutions[:] = local_solutions.reshape(descendant_level.Local_Solutions.shape)
             # compute all possible interactions
-            M2Ms = np.empty([3,3,doit.sum(),4*Nequiv], dtype=self.dtype)
+            M2Ms = np.empty([3,3,4*Nequiv,doit.sum()], dtype=self.dtype)
             CM2Lh = CM2LS[ind+1]
             for kkx in range(3):
                 for kky in range(3):
                     if not (kkx-1 == 0 and kky-1 == 0):
-                        M2Ms[kkx, kky, :, :] = CM2Lh[kkx, kky].dot(descendant_level.RSEQD.T).T
+                        CM2Lh[kkx, kky].dot(descendant_level.RSEQD.T, out=M2Ms[kkx, kky])
             ci4 = (Level.children_ind/4).astype(int)
             numba_add_interactions(doit, ci4, Level.colleagues, Level.xmid, Level.ymid, descendant_level.Local_Solutions, M2Ms, Nequiv)
         et = time.time()

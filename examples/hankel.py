@@ -12,7 +12,7 @@ _h0 = CFG(lambda x: hankel1(0, x), 1e-30, 2000, tol=1e-14, n=32, verbose=False)
 h0 = _h0.get_base_function()
 
 """
-Demonstration of the FMM for the Laplace Kernel
+Demonstration of the FMM for the Helmholtz Kernel
 
 If N <= 50000, will do a direct sum and compare to this
 Otherwise, will try to call FMMLIB2D through pyfmmlib2d
@@ -41,8 +41,8 @@ kernel_functions = Prepare_K_Functions(MH_Eval)
 numba_functions_otf  = Prepare_Functions_OTF (MH_Eval)
 # numba_functions_plan = Prepare_Functions_PLAN(MH_Eval)
 
-N_source = 1000*20
-N_target = 1000*20
+N_source = 1000*10
+N_target = 1000*10
 test = 'circle' # clustered or circle or uniform
 
 # construct some data to run FMM on
@@ -164,4 +164,6 @@ if False:
     print('FMM evaluation took:             {:0.1f}'.format(time_fmm_eval))
     print('Maximum difference:              {:0.2e}'.format(err.max()))
 
-
+import line_profiler
+%load_ext line_profiler
+%lprun -f FMM.build_expansions FMM.build_expansions(tau)
