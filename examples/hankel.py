@@ -3,13 +3,7 @@ import pykifmm2d.class_fmm as fmm
 import numpy as np
 import numba
 import time
-
-from fast_interp import chebyshev_function_generator
-CFG = chebyshev_function_generator.ChebyshevFunctionGenerator
-
-from scipy.special import hankel1
-_h0 = CFG(lambda x: hankel1(0, x), 1e-30, 2000, tol=1e-14, n=32, verbose=False)
-h0 = _h0.get_base_function()
+import os
 
 """
 Demonstration of the FMM for the Helmholtz Kernel
@@ -24,25 +18,35 @@ On my macbook pro N=50,000 takes the direct method ~7s, the FMM <1s
 And gives error <5e-14
 """
 
+cpu_num = int(os.cpu_count()/2)
+
 random2 = pykifmm2d.utils.random2
 Prepare_Functions_OTF  = fmm.prepare_numba_functions_on_the_fly
 Prepare_K_Functions    = fmm.Get_Kernel_Functions
-helmholtz_k = 10.0
 
-# Modified Helmholtz Kernel
+# Helmholtz Kernel
+from fast_interp import chebyshev_function_generator
+CFG = chebyshev_function_generator.ChebyshevFunctionGenerator
+
+from scipy.special import hankel1
+_h0 = CFG(lambda x: hankel1(0, x), 1e-30, 2000, tol=1e-14, n=32, verbose=False)
+h0 = _h0.get_base_function()
+
+helmholtz_k = 2.0
+
 @numba.njit(fastmath=True)
-def MH_Eval(sx, sy, tx, ty):
+def Eval(sx, sy, tx, ty):
     return h0(helmholtz_k*np.sqrt((tx-sx)**2 + (ty-sy)**2))*0.25j
 
 # associated kernel evaluation functions
-kernel_functions = Prepare_K_Functions(MH_Eval)
+kernel_functions = Prepare_K_Functions(Eval)
 (KF, KA, KAS) = kernel_functions
 # jit compile internal numba functions
-numba_functions_otf  = Prepare_Functions_OTF (MH_Eval)
-# numba_functions_plan = Prepare_Functions_PLAN(MH_Eval)
+numba_functions_otf  = Prepare_Functions_OTF (Eval)
+# numba_functions_plan = Prepare_Functions_PLAN(Laplace_Eval)
 
 N_source = 1000*10
-N_target = 1000*10
+N_target = 1000*1000*10
 test = 'circle' # clustered or circle or uniform
 
 # construct some data to run FMM on
@@ -80,8 +84,7 @@ N_cutoff = 50
 N_equiv = 48
 
 # get random density
-tau = (np.random.rand(N_source) + 1j*np.random.rand(N_source))/N_source
-tau = tau.astype(complex)
+tau = (np.random.rand(N_source))
 
 print('\nHelmholtz FMM with', N_source, 'source pts and', N_target, 'target pts.')
 
@@ -106,17 +109,24 @@ if reference:
             import pyfmmlib2d
             source = np.row_stack([px, py])
             target = np.row_stack([rx, ry])
+            dumb_targ = np.row_stack([np.array([0.6, 0.6]), np.array([0.5, 0.5])])
             st = time.time()
-            out = pyfmmlib2d.HFMM(source, target, charge=tau, compute_source_potential=True, compute_target_potential=True, helmholtz_parameter=helmholtz_k)
-            self_reference_eval = out['source']['u']
-            target_reference_eval = out['target']['u']
-            print('FMMLIB self+target evaluation took:   {:0.1f}'.format((time.time()-st)*1000))
+            out = pyfmmlib2d.HFMM(source, dumb_targ, charge=tau, compute_target_potential=True, helmholtz_parameter=helmholtz_k)
+            tform = time.time() - st
+            print('FMMLIB generation took:               {:0.1f}'.format(tform*1000))
+            print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tform/cpu_num/1000), '\033[0m ')
             st = time.time()
             out = pyfmmlib2d.HFMM(source, charge=tau, compute_source_potential=True, helmholtz_parameter=helmholtz_k)
-            print('FMMLIB self only evaluation took:     {:0.1f}'.format((time.time()-st)*1000))
+            self_reference_eval = out['source']['u']
+            tt = time.time() - st - tform
+            print('FMMLIB self only eval took:           {:0.1f}'.format(tt*1000))
+            print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
             st = time.time()
             out = pyfmmlib2d.HFMM(source, target, charge=tau, compute_target_potential=True, helmholtz_parameter=helmholtz_k)
-            print('FMMLIB target only evaluation took:   {:0.1f}'.format((time.time()-st)*1000))
+            target_reference_eval = out['target']['u']
+            tt = time.time() - st - tform
+            print('FMMLIB target only eval took:         {:0.1f}'.format(tt*1000))
+            print('...Points/Second/Core (thousands)    \033[1m', int(N_target/tt/cpu_num/1000), '\033[0m ')
         except:
             print('')
             reference = False
@@ -134,18 +144,25 @@ FMM.precompute()
 print('pyfmmlib2d precompute took:           {:0.1f}'.format((time.time()-st)*1000))
 st = time.time()
 FMM.build_expansions(tau)
-print('pyfmmlib2d generation took:           {:0.1f}'.format((time.time()-st)*1000))
+tt = (time.time()-st)
+print('pyfmmlib2d generation took:           {:0.1f}'.format(tt*1000))
+print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
 st = time.time()
 self_fmm_eval = FMM.evaluate_to_points(px, py, True)
-print('pyfmmlib2d source eval took:          {:0.1f}'.format((time.time()-st)*1000))
+tt = (time.time()-st)
+print('pyfmmlib2d source eval took:          {:0.1f}'.format(tt*1000))
+print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
 
 st = time.time()
 target_fmm_eval = FMM.evaluate_to_points(rx, ry)
-print('pyfmmlib2d target eval took:          {:0.1f}'.format((time.time()-st)*1000))
+tt = (time.time()-st)
+print('pyfmmlib2d target eval took:          {:0.1f}'.format(tt*1000))
+print('...Points/Second/Core (thousands)    \033[1m', int(N_target/tt/cpu_num/1000), '\033[0m ')
 
 if reference:
-    self_err = np.abs(self_fmm_eval - self_reference_eval)
-    target_err = np.abs(target_fmm_eval - target_reference_eval)
+    scale = np.abs(self_reference_eval).max()
+    self_err = np.abs(self_fmm_eval - self_reference_eval)/scale
+    target_err = np.abs(target_fmm_eval - target_reference_eval)/scale
     print('\nMaximum difference, self:             {:0.2e}'.format(self_err.max()))
     print('Maximum difference, target:           {:0.2e}'.format(target_err.max()))
 
@@ -164,6 +181,3 @@ if False:
     print('FMM evaluation took:             {:0.1f}'.format(time_fmm_eval))
     print('Maximum difference:              {:0.2e}'.format(err.max()))
 
-import line_profiler
-%load_ext line_profiler
-%lprun -f FMM.build_expansions FMM.build_expansions(tau)

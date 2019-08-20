@@ -6,16 +6,16 @@ import numba
 import time
 from .tree import Tree
 from .misc.mkl_sparse import SpMV_viaMKL
+import sys
 
-cacheit = False
+@numba.njit(parallel=True)
+def numba_distribute(ucs, temp, pi, li, li2):
+    for i in numba.prange(pi.size):
+        if li[i] >= 0:
+            ucs[li2[pi[i]]] = temp[li[i]]
 
-@numba.njit(parallel=True, cache=cacheit)
-def numba_distribute(ucs, temp, pi, n):
-    for i in numba.prange(n):
-        ucs[pi[i]] = temp[i]
-
-@numba.njit(parallel=True, cache=cacheit)
-def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M2Ms, Nequiv):
+@numba.njit(parallel=True)
+def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M2Ms, Nequiv, li):
     n = doit.shape[0]
     for i in numba.prange(n):
         if doit[i]:
@@ -25,11 +25,12 @@ def numba_add_interactions(doit, ci4, colleagues, xmid, ymid, Local_Solutions, M
                 if ci >= 0 and ci != i:
                     xdist = int(np.sign(xmid[ci]-xmid[i]))
                     ydist = int(np.sign(ymid[ci]-ymid[i]))
-                    di = ci4[ci]
-                    for k in range(4):
-                        for ll in range(Local_Solutions.shape[1]):
-                            Local_Solutions[4*dii+k, ll] += \
-                                M2Ms[xdist+1,ydist+1,k*Nequiv+ll,di]
+                    di = li[ci4[ci]]
+                    if di >= 0:
+                        for k in range(4):
+                            for ll in range(Local_Solutions.shape[1]):
+                                Local_Solutions[4*dii+k, ll] += \
+                                    M2Ms[xdist+1,ydist+1,k*Nequiv+ll,di]
 
 def get_level_information(node_width, theta):
     # get information for this level
@@ -45,43 +46,20 @@ def get_level_information(node_width, theta):
 
 def fake_print(*args, **kwargs):
     pass
+def myprint(*args, **kwargs):
+    print(*args, **kwargs)
+    sys.stdout.flush()
 def get_print_function(verbose):
-    return print if verbose else fake_print
+    return myprint if verbose else fake_print
 
 def prepare_numba_functions_on_the_fly(Kernel_Eval):
 
-    # this isn't really used anymore!!!
     @numba.njit(parallel=True, fastmath=True)
-    def evaluate_neighbor_interactions(x, y, leaf, botind, topind, tau, colleagues, sol):
-        n = botind.shape[0]
-        # loop over all nodes in this level
-        for i in numba.prange(n):
-            # if it's a leaf, we add neighbor interactions
-            if leaf[i]:
-                bind1 = botind[i]
-                tind1 = topind[i]
-                nt = tind1 - bind1 # number of targets in this leaf
-                if nt > 0:
-                    # loop through all 9 possible colleagues
-                    for j in range(9):
-                        ci = colleagues[i,j]
-                        if ci >= 0: # if ci < 0 there's not really a colleague
-                            bind2 = botind[ci]
-                            tind2 = topind[ci]
-                            ns = tind2 - bind2
-                            # number of source points in colleague
-                            if ns > 0:
-                                for ks in range(bind2, bind2+ns):
-                                    for kt in range(bind1, bind1+nt):
-                                        if ks != kt:
-                                            sol[kt] += tau[ks]*Kernel_Eval(x[ks], y[ks], x[kt], y[kt])
-
-    @numba.njit(parallel=True, fastmath=True)
-    def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck):
+    def numba_upwards_pass(x, y, botind, topind, ns, compute_upwards, xtarg, ytarg, xmid, ymid, tau, ucheck, li):
         n = botind.shape[0]
         ne = xtarg.shape[0]
         for i in numba.prange(n):
-            if compute_upwards[i] and (ns[i] > 0):
+            if compute_upwards[i] and li[i] >= 0:
                 bi = botind[i]
                 ti = topind[i]
                 ni = ti-bi
@@ -89,22 +67,7 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
                 ty = ytarg + ymid[i]
                 for ks in range(bi, bi+ni):
                     for kt in range(ne):
-                        ucheck[i,kt] += Kernel_Eval(x[ks], y[ks], tx[kt], ty[kt])*tau[ks]
-
-    @numba.njit(parallel=True, fastmath=True)
-    def numba_downwards_pass2(x, y, botind, topind, ns, leaf, xsrc, ysrc, xmid, ymid, local_expansions, sol):
-        n = botind.shape[0]
-        ne = xsrc.shape[0]
-        for i in numba.prange(n):
-            if leaf[i] and (ns[i] > 0):
-                bi = botind[i]
-                ti = topind[i]
-                ni = ti-bi
-                tx = x[bi:ti] - xmid[i]
-                ty = y[bi:ti] - ymid[i]
-                for ks in range(ne):
-                    for kt in range(ni):
-                        sol[bi+kt] += Kernel_Eval(xsrc[ks], ysrc[ks], tx[kt], ty[kt])*local_expansions[i,ks]
+                        ucheck[li[i],kt] += Kernel_Eval(x[ks], y[ks], tx[kt], ty[kt])*tau[ks]
 
     @numba.njit(parallel=True, fastmath=True)
     def numba_target_local_expansion_evaluation(xs, ys, inds, locs, large_xs, large_ys, xmids, ymids, Local_Expansions, pot):
@@ -146,7 +109,7 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
                         for ks in range(bind, bind+ns):
                             pot[i] += Kernel_Eval(sx[ks], sy[ks], x, y)*tau_ordered[ks]
 
-    return evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2, numba_target_local_expansion_evaluation, numba_target_neighbor_evaluation
+    return numba_upwards_pass, numba_target_local_expansion_evaluation, numba_target_neighbor_evaluation
 
 def Get_Kernel_Functions(Kernel_Eval):
     @numba.njit(parallel=True, fastmath=True)
@@ -180,7 +143,7 @@ def Get_Kernel_Functions(Kernel_Eval):
 
     return KF, KA, KAS
 
-def Kernel_Form(KF, sx, sy, tx=None, ty=None, out=None):
+def Kernel_Form(KF, sx, sy, tx=None, ty=None, out=None, mdtype=float):
     if tx is None or ty is None:
         tx = sx
         ty = sy
@@ -193,7 +156,7 @@ def Kernel_Form(KF, sx, sy, tx=None, ty=None, out=None):
     ns = sx.shape[0]
     nt = tx.shape[0]
     if out is None:
-        out = np.empty((nt, ns), dtype=float)
+        out = np.empty((nt, ns), dtype=mdtype)
     KF(sx, sy, tx, ty, out)
     if isself:
         np.fill_diagonal(out, 0.0)
@@ -249,7 +212,7 @@ class FMM(object):
         E2C_LUs = []
         for ind in range(tree.levels):
             equiv_to_check = Kernel_Form(KF, small_xs[ind], small_ys[ind], \
-                                                    large_xs[ind], large_ys[ind])
+                                                    large_xs[ind], large_ys[ind], mdtype=self.dtype)
             E2C_LUs.append(sp.linalg.lu_factor(equiv_to_check))
         # get Collected Equivalent Coordinates for each level
         M2MC = []
@@ -267,7 +230,7 @@ class FMM(object):
                     small_ys[ind+1] + 0.5*widths[ind+1],
                 ])
             Kern = Kernel_Form(KF, collected_equiv_xs, collected_equiv_ys, \
-                                                large_xs[ind], large_ys[ind])
+                                                large_xs[ind], large_ys[ind], mdtype=self.dtype)
             M2MC.append(Kern)
         # get all required M2L translations
         M2LS = []
@@ -282,7 +245,7 @@ class FMM(object):
                         small_xhere = small_xs[ind] + (indx - 3)*widths[ind]
                         small_yhere = small_ys[ind] + (indy - 3)*widths[ind]
                         M2Lhere[indx,indy] = Kernel_Form(KF, small_xhere, \
-                                                small_yhere, small_xs[ind], small_ys[ind])
+                                                small_yhere, small_xs[ind], small_ys[ind], mdtype=self.dtype)
             M2LS.append(M2Lhere)
         # get all Collected M2L translations
         CM2LS = []
@@ -334,7 +297,7 @@ class FMM(object):
         self.print('....Time for precomputations:   {:0.2f}'.format(1000*(et-st)))
     def build_expansions(self, tau):
         tree, E2C_LUs, M2MC, M2LS, CM2LS, small_xs, small_ys, large_xs, large_ys, small_radii, large_radii, widths = self._get_names()
-        (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2, numba_target_local_expansion_evaluation, \
+        (numba_upwards_pass, numba_target_local_expansion_evaluation, \
             numba_target_neighbor_evaluation) = self.numba_functions
         Nequiv, Ncutoff = self.Nequiv, self.Ncutoff
         tau_ordered = tau[tree.ordv]
@@ -348,11 +311,10 @@ class FMM(object):
             # check if there is a level below us, if there is, lift all its expansions
             if ind != tree.levels-1:
                 ancestor_level = tree.Levels[ind+1]
-            if ind != tree.levels-1:
-                ancestor_level = tree.Levels[ind+1]
                 temp1 = M2MC[ind].dot(ancestor_level.RSEQD.T).T
-                numba_distribute(u_check_surfaces, temp1, ancestor_level.short_parent_ind, int(ancestor_level.n_node/4))
-            numba_upwards_pass(tree.x, tree.y, Level.bot_ind, Level.top_ind, Level.ns, Level.compute_upwards, large_xs[ind], large_ys[ind], Level.xmid, Level.ymid, tau_ordered, u_check_surfaces)
+                # self.print(temp1.shape, u_check_surfaces.shape, ancestor_level.short_parent_ind.shape, ancestor_level.short_parent_ind.max(), ancestor_level.parent_density_ind.shape, ancestor_level.parent_density_ind.max(), Level.this_density_ind.shape, Level.this_density_ind.max())
+                numba_distribute(u_check_surfaces, temp1, ancestor_level.short_parent_ind, ancestor_level.parent_density_ind, Level.this_density_ind)
+            numba_upwards_pass(tree.x, tree.y, Level.bot_ind, Level.top_ind, Level.ns, Level.compute_upwards, large_xs[ind], large_ys[ind], Level.xmid, Level.ymid, tau_ordered, u_check_surfaces, Level.this_density_ind)
             Level.Equiv_Densities[:] = sp.linalg.lu_solve(E2C_LUs[ind], u_check_surfaces.T).T
         et = time.time()
         self.print('....Time for upwards pass:      {:0.2f}'.format(1000*(et-st)))
@@ -370,14 +332,14 @@ class FMM(object):
             # now we have not leaves in the descendant_level.Local_Solutions...
             descendant_level.Local_Solutions[:] = local_solutions.reshape(descendant_level.Local_Solutions.shape)
             # compute all possible interactions
-            M2Ms = np.empty([3,3,4*Nequiv,doit.sum()], dtype=self.dtype)
+            M2Ms = np.empty([3,3,4*Nequiv,descendant_level.n_sib_has_source], dtype=self.dtype)
             CM2Lh = CM2LS[ind+1]
             for kkx in range(3):
                 for kky in range(3):
                     if not (kkx-1 == 0 and kky-1 == 0):
                         CM2Lh[kkx, kky].dot(descendant_level.RSEQD.T, out=M2Ms[kkx, kky])
             ci4 = (Level.children_ind/4).astype(int)
-            numba_add_interactions(doit, ci4, Level.colleagues, Level.xmid, Level.ymid, descendant_level.Local_Solutions, M2Ms, Nequiv)
+            numba_add_interactions(doit, ci4, Level.colleagues, Level.xmid, Level.ymid, descendant_level.Local_Solutions, M2Ms, Nequiv, descendant_level.parent_density_ind)
         et = time.time()
         self.print('....Time for downwards pass 1:  {:0.2f}'.format(1000*(et-st)))
         # downwards pass 2a - start at top and compute local expansions
@@ -387,31 +349,6 @@ class FMM(object):
             Level.Local_Expansions = sp.linalg.lu_solve(E2C_LUs[ind], Level.Local_Solutions.T).T
         et = time.time()
         self.print('....Time for downwards pass 2a: {:0.2f}'.format(1000*(et-st)))
-    def evaluate_to_sources(self):
-        tree, E2C_LUs, M2MC, M2LS, CM2LS, small_xs, small_ys, large_xs, large_ys, small_radii, large_radii, widths = self._get_names()
-        (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2, numba_target_local_expansion_evaluation, \
-            numba_target_neighbor_evaluation) = self.numba_functions
-        if not hasattr(self, 'tau'):
-            raise Exception('Need to call build_expansions first')
-        if not hasattr(self, 'desorter'):
-            self.desorter = np.argsort(tree.ordv)
-        tau, tau_ordered = self.tau, self.tau_ordered
-        solution_ordered = np.zeros_like(tau)
-        # downwards pass 2b - start at top and evaluate local expansions
-        st = time.time()
-        for ind in range(1,tree.levels):
-            Level = tree.Levels[ind]
-            numba_downwards_pass2(tree.x, tree.y, Level.bot_ind, Level.top_ind, Level.ns, Level.leaf, large_xs[ind], large_ys[ind], Level.xmid, Level.ymid, Level.Local_Expansions, solution_ordered)
-        et = time.time()
-        self.print('....Time for downwards pass 2b: {:0.2f}'.format(1000*(et-st)))
-        # downwards pass 3 - start at top and evaluate neighbor interactions
-        st = time.time()
-        for ind in range(1,tree.levels):
-            Level = tree.Levels[ind]
-            evaluate_neighbor_interactions(tree.x, tree.y, Level.leaf, Level.bot_ind, Level.top_ind, tau_ordered, Level.colleagues, solution_ordered)
-        et = time.time()
-        self.print('....Time for downwards pass 3:  {:0.2f}'.format(1000*(et-st)))
-        return solution_ordered[self.desorter]
     def evaluate_to_point(self, x, y):
         tree, E2C_LUs, M2MC, M2LS, CM2LS, small_xs, small_ys, large_xs, large_ys, small_radii, large_radii, widths = self._get_names()
         KF, KA, KAS = self.kernel_functions
@@ -440,7 +377,7 @@ class FMM(object):
         return pot
     def evaluate_to_points(self, x,  y, check_self=False):
         tree, E2C_LUs, M2MC, M2LS, CM2LS, small_xs, small_ys, large_xs, large_ys, small_radii, large_radii, widths = self._get_names()
-        (evaluate_neighbor_interactions, numba_upwards_pass, numba_downwards_pass2, numba_target_local_expansion_evaluation, \
+        (numba_upwards_pass, numba_target_local_expansion_evaluation, \
             numba_target_neighbor_evaluation) = self.numba_functions
         KF, KA, KAS = self.kernel_functions
         tau_ordered = self.tau_ordered

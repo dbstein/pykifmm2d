@@ -399,14 +399,26 @@ class Level(object):
     def add_null_Xlist(self):
         self.Xlist = np.zeros(self.n_node, dtype=bool)
     def allocate_workspace(self, Nequiv, dtype=float):
-        self.Local_Solutions = np.zeros([self.n_node, Nequiv], dtype=dtype)
-        self.Check_Us = np.zeros([self.n_node, Nequiv], dtype=dtype)
-        self.Equiv_Densities = np.zeros([self.n_node, Nequiv], dtype=dtype)
-        resh = (int(self.n_node/4), int(Nequiv*4))
+        allocate_num = self.n_node
+        self.Local_Solutions = np.zeros([allocate_num, Nequiv], dtype=dtype)
+        self.Check_Us = np.zeros([allocate_num, Nequiv], dtype=dtype)
+        self.Equiv_Densities = np.zeros([allocate_num, Nequiv], dtype=dtype)
+        resh = (int(allocate_num/4), int(Nequiv*4))
         self.resh = resh
         self.RSEQD = np.reshape(self.Equiv_Densities, resh)
         if self.RSEQD.flags.owndata:
             raise Exception('Something went wrong with reshaping the equivalent densities, it made a copy instead of a view.')
+    def allocate_workspace(self, Nequiv, dtype=float):
+        allocate_num = self.n_allocate_density
+        self.Local_Solutions = np.zeros([self.n_node, Nequiv], dtype=dtype)
+        self.Check_Us = np.zeros([self.n_allocate_density, Nequiv], dtype=dtype)
+        self.Equiv_Densities = np.zeros([self.n_allocate_density, Nequiv], dtype=dtype)
+        resh = (int(allocate_num/4), int(Nequiv*4))
+        self.resh = resh
+        self.RSEQD = np.reshape(self.Equiv_Densities, resh)
+        if self.RSEQD.flags.owndata:
+            raise Exception('Something went wrong with reshaping the equivalent densities, it made a copy instead of a view.')
+
 
 @numba.njit("(i8[:],b1[:],i8[:],i8[:])", parallel=True, cache=cacheit)
 def numba_get_depths(depths, leaves, children_ind, descendant_depths):
@@ -543,7 +555,25 @@ class Tree(object):
                 if num_Xlist > 0:
                     Descendant_Level = self.Levels[ind+1]
                     split_bad_leaves(Level, Descendant_Level, self.x, self.y, self.ordv, Xlist, True)
-            Level.compute_upwards = np.logical_or(np.logical_and(Level.leaf, np.logical_not(Level.Xlist)), Level.fake_leaf)
+            if ind > 0:
+                Level.compute_upwards = np.logical_or(np.logical_and(Level.leaf, np.logical_not(Level.Xlist)), Level.fake_leaf)
+                ns = Level.top_ind - Level.bot_ind
+                # if its a leaf (or fake leaf) and there are sources, we need to compute a Density
+                Level.compute_upwards = np.logical_and(Level.compute_upwards, ns > 0)
+                # if there's any points in the node (whether a leaf or not, there should be a non-null Density)
+                Level.has_source = ns > 0
+                # whether any siblings have any
+                Level.sib_has_source = np.add.reduceat(Level.has_source, np.arange(0, len(Level.has_source), 4)) > 0
+                Level.n_sib_has_source = np.sum(Level.sib_has_source)
+                # whether to allocate memory for Equiv Densities
+                Level.allocate_density = np.repeat(Level.sib_has_source, 4)
+                Level.n_allocate_density = np.sum(Level.allocate_density)
+                # get the parent ind corresponding to the short density
+                Level.parent_density_ind = np.zeros(int(Level.n_node/4), dtype=int) - 1
+                Level.parent_density_ind[Level.sib_has_source] = np.arange(Level.n_sib_has_source).astype(int)
+                # get this level ind corresponding to check sources
+                Level.this_density_ind = np.zeros(int(Level.n_node), dtype=int) - 1
+                Level.this_density_ind[Level.allocate_density] = np.arange(Level.n_allocate_density).astype(int)
     def get_not_leaves(self):
         for Level in self.Levels:
             Level.get_not_leaves()
@@ -557,9 +587,6 @@ class Tree(object):
         for Level in self.Levels[1:]:
             Level.allocate_workspace(Nequiv, dtype)
         self.workspace_allocated = True
-
-
-
 
     """
     Information functions
