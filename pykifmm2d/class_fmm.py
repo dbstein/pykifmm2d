@@ -59,7 +59,8 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
         n = botind.shape[0]
         ne = xtarg.shape[0]
         for i in numba.prange(n):
-            if compute_upwards[i] and li[i] >= 0:
+            lii = li[i]
+            if compute_upwards[i] and lii >= 0:
                 bi = botind[i]
                 ti = topind[i]
                 ni = ti-bi
@@ -67,7 +68,7 @@ def prepare_numba_functions_on_the_fly(Kernel_Eval):
                 ty = ytarg + ymid[i]
                 for ks in range(bi, bi+ni):
                     for kt in range(ne):
-                        ucheck[li[i],kt] += Kernel_Eval(x[ks], y[ks], tx[kt], ty[kt])*tau[ks]
+                        ucheck[lii,kt] += Kernel_Eval(x[ks], y[ks], tx[kt], ty[kt])*tau[ks]
 
     @numba.njit(parallel=True, fastmath=True)
     def numba_target_local_expansion_evaluation(xs, ys, inds, locs, large_xs, large_ys, xmids, ymids, Local_Expansions, pot):

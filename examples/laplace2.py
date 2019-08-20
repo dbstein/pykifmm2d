@@ -19,6 +19,9 @@ And gives error <5e-14
 """
 
 cpu_num = int(os.cpu_count()/2)
+numba.config.NUMBA_NUM_THREADS = cpu_num
+import mkl
+mkl.set_num_threads(cpu_num)
 
 random2 = pykifmm2d.utils.random2
 Prepare_Functions_OTF  = fmm.prepare_numba_functions_on_the_fly
@@ -126,10 +129,10 @@ if reference:
             reference = False
 
 # do my FMM (once first, to compile functions...)
-FMM = fmm.FMM(px, py, kernel_functions, numba_functions_otf, N_equiv, N_cutoff)
+FMM = fmm.FMM(px[:20*N_cutoff], py[:20*N_cutoff], kernel_functions, numba_functions_otf, N_equiv, N_cutoff)
 FMM.precompute()
 FMM.build_expansions(tau)
-_ = FMM.evaluate_to_points(px, py, True)
+_ = FMM.evaluate_to_points(px[:20*N_cutoff], py[:20*N_cutoff], True)
 
 st = time.time()
 print('')
@@ -174,4 +177,11 @@ if False:
     print('\nFMM planning took:               {:0.1f}'.format(planning_time))
     print('FMM evaluation took:             {:0.1f}'.format(time_fmm_eval))
     print('Maximum difference:              {:0.2e}'.format(err.max()))
+
+
+import line_profiler
+%load_ext line_profiler
+%lprun -f FMM.evaluate_to_points FMM.evaluate_to_points(rx, ry)
+
+%lprun -f FMM.build_expansions FMM.build_expansions(tau)
 
